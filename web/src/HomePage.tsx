@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import "./home.css";
 
-type AgentId = "turbo" | "deep" | "sol" | "luna" | "terra" | "claude";
+type AgentId = "turbo" | "deep" | "sol" | "luna" | "terra" | "fable" | "opus" | "sonnet";
 type LoadState = "loading" | "ready" | "error";
 
 interface AgentChoice {
@@ -62,11 +62,25 @@ const AGENT_CHOICES: AgentChoice[] = [
     model: "gpt-5.6-terra",
   },
   {
-    agentId: "claude",
-    shortLabel: "Claude",
-    label: "Claude Code",
+    agentId: "fable",
+    shortLabel: "Fable",
+    label: "Claude Fable 5",
     engine: "reflex",
-    model: "claude",
+    model: "claude-fable-5",
+  },
+  {
+    agentId: "opus",
+    shortLabel: "Opus",
+    label: "Claude Opus 5",
+    engine: "reflex",
+    model: "claude-opus-5",
+  },
+  {
+    agentId: "sonnet",
+    shortLabel: "Sonnet",
+    label: "Claude Sonnet 5",
+    engine: "reflex",
+    model: "claude-sonnet-5",
   },
 ];
 
@@ -301,11 +315,14 @@ export function HomePage({ onNavigate }: { onNavigate: (href: string) => void })
 
   useEffect(() => {
     if (claudeAvailable) return;
-    setSelectedAgents((current) => current.filter((agentId) => agentId !== "claude"));
+    const reflexIds = new Set(
+      AGENT_CHOICES.filter((agent) => agent.engine === "reflex").map((agent) => agent.agentId),
+    );
+    setSelectedAgents((current) => current.filter((agentId) => !reflexIds.has(agentId)));
   }, [claudeAvailable]);
 
   const offeredAgents = useMemo(
-    () => AGENT_CHOICES.filter((agent) => agent.agentId !== "claude" || claudeAvailable),
+    () => AGENT_CHOICES.filter((agent) => agent.engine !== "reflex" || claudeAvailable),
     [claudeAvailable],
   );
 

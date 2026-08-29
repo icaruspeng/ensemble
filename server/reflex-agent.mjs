@@ -835,11 +835,13 @@ export function createReflexAdapter(options = {}) {
 
     let created;
     try {
+      const specModel = nonemptyString(agentSpec?.model);
       const response = await request("/agents", {
-        name: `${nonemptyString(room.name) ?? roomId}-claude`,
+        name: `${nonemptyString(room.name) ?? roomId}-${agentId}`,
         agentType: "claude-code",
         prompt: goal,
         authMethod: "claude-max",
+        ...(specModel && specModel !== "claude" ? { model: specModel } : {}),
       });
       if (!response.ok) {
         throw new Error(

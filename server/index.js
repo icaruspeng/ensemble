@@ -54,12 +54,26 @@ export const BUILTIN_AGENTS = Object.freeze({
     model: "gpt-5.6-terra",
     color: "#86efac",
   }),
-  claude: Object.freeze({
-    agentId: "claude",
-    label: "Claude Code",
+  fable: Object.freeze({
+    agentId: "fable",
+    label: "Claude Fable 5",
     engine: "reflex",
-    model: "claude",
+    model: "claude-fable-5",
     color: "#f59e0b",
+  }),
+  opus: Object.freeze({
+    agentId: "opus",
+    label: "Claude Opus 5",
+    engine: "reflex",
+    model: "claude-opus-5",
+    color: "#fb923c",
+  }),
+  sonnet: Object.freeze({
+    agentId: "sonnet",
+    label: "Claude Sonnet 5",
+    engine: "reflex",
+    model: "claude-sonnet-5",
+    color: "#fdba74",
   }),
 });
 
@@ -1287,8 +1301,11 @@ export async function buildServer(options = {}) {
     const agents = [];
     for (const agentId of body.agents) {
       const builtIn = BUILTIN_AGENTS[agentId];
-      if (!builtIn || (agentId === "claude" && !reflexEnabled)) {
+      if (!builtIn) {
         return { error: `agent ${agentId} is unavailable` };
+      }
+      if (builtIn.engine === "reflex" && !reflexEnabled) {
+        return { error: `agent ${agentId} (Claude via Reflex) is unavailable` };
       }
       agents.push(cloneAgent(builtIn));
     }

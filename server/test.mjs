@@ -400,7 +400,7 @@ async function main() {
       payload: {
         name: "Unavailable Reflex",
         goal: "Must not be accepted without complete credentials",
-        agents: ["claude"],
+        agents: ["fable"],
       },
     });
     assert.equal(guardResponse.statusCode, 400);
@@ -468,7 +468,7 @@ async function main() {
       body: JSON.stringify({
         name: "Alpha room",
         goal: "Ship the alpha experience",
-        agents: ["turbo", "deep", "claude"],
+        agents: ["turbo", "deep", "fable"],
         repoUrl: "https://example.test/alpha.git",
         importThreadId: "thread-alpha",
       }),
@@ -488,7 +488,7 @@ async function main() {
         engine,
         model,
       })),
-      ["turbo", "deep", "claude"].map((agentId) => {
+      ["turbo", "deep", "fable"].map((agentId) => {
         const { label, engine, model } = BUILTIN_AGENTS[agentId];
         return { agentId, label, engine, model };
       }),
@@ -539,7 +539,7 @@ async function main() {
       ),
     );
     assert.equal(reflex.createCalls[0].room.roomId, alpha.roomId);
-    assert.equal(reflex.createCalls[0].agent.agentId, "claude");
+    assert.equal(reflex.createCalls[0].agent.agentId, "fable");
 
     const alphaReady = await waitUntil(async () => {
       const roomResponse = await fetchPath(
@@ -547,7 +547,7 @@ async function main() {
       );
       const room = await roomResponse.json();
       return room.workspace.status === "ready" &&
-        room.agents.find(({ agentId }) => agentId === "claude")?.reflexAgentId
+        room.agents.find(({ agentId }) => agentId === "fable")?.reflexAgentId
         ? room
         : null;
     }, "alpha workspace and Reflex readiness");
@@ -687,7 +687,7 @@ async function main() {
           .filter(({ type }) => type === "agent.registered")
           .map(({ payload }) => payload.agentId),
       ),
-      new Set(["turbo", "deep", "claude"]),
+      new Set(["turbo", "deep", "fable"]),
     );
     assert.ok(
       alice.welcome.events.some(
@@ -840,19 +840,19 @@ async function main() {
     assert.equal(deepDispatch.payload.byActorId, bob.welcome.actorId);
     assert.equal(deepDispatch.actor.id, bob.welcome.actorId);
 
-    alice.peer.send({ type: "steer", text: "Ask Claude", agentId: "claude" });
+    alice.peer.send({ type: "steer", text: "Ask Claude", agentId: "fable" });
     const claudeDispatch = await alice.peer.waitForEvent(
       "crew.task_dispatched",
       ({ text }) => text === "Ask Claude",
     );
-    assert.equal(claudeDispatch.payload.agentId, "claude");
+    assert.equal(claudeDispatch.payload.agentId, "fable");
     await waitUntil(() => reflex.steerCalls.length === 1, "Reflex steer routing");
     assert.deepEqual(reflex.steerCalls[0], {
-      reflexAgentId: `reflex_${alpha.roomId}_claude`,
+      reflexAgentId: `reflex_${alpha.roomId}_fable`,
       text: "Ask Claude",
       context: {
         roomId: alpha.roomId,
-        agentId: "claude",
+        agentId: "fable",
         taskId: claudeDispatch.payload.taskId,
       },
     });
@@ -860,10 +860,10 @@ async function main() {
       "agent.message",
       ({ text }) => text === "Reflex handled: Ask Claude",
     );
-    assert.equal(reflexMessage.payload.agentId, "claude");
+    assert.equal(reflexMessage.payload.agentId, "fable");
     assert.deepEqual(reflexMessage.actor, {
-      id: "act_claude",
-      name: "Claude Code",
+      id: "act_fable",
+      name: "Claude Fable 5",
       kind: "agent",
     });
     assert.deepEqual(
