@@ -12,6 +12,8 @@ export default function App() {
       </header>
 
       <main className="board" aria-label="Empty shared room board" />
+
+      <footer className="roomboard-footer">built live by Ensemble.</footer>
     </div>
   );
 }

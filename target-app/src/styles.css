@@ -25,7 +25,7 @@ body {
 
 .roomboard-shell {
   display: grid;
-  grid-template-rows: auto 1fr;
+  grid-template-rows: auto 1fr auto;
   min-height: 100vh;
   padding: 20px;
   gap: 14px;
@@ -86,6 +86,14 @@ body {
   box-shadow:
     0 1px 1px rgb(56 51 40 / 5%),
     0 18px 52px rgb(56 51 40 / 8%);
+}
+
+.roomboard-footer {
+  max-width: 1480px;
+  margin: 0 auto;
+  color: #8b8070;
+  font-size: 0.78rem;
+  letter-spacing: 0.02em;
 }
 
 @media (max-width: 640px) {

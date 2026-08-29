@@ -319,10 +319,6 @@ function mapItem(run, item, stage = "completed") {
     const wasAnnounced = run.announcedCommands.has(lifecycleKey);
 
     if (!completed) {
-      if (!wasAnnounced) {
-        run.announcedCommands.add(lifecycleKey);
-        eventBuffer.add("agent.command", { command: commandFrom(item) });
-      }
       return;
     }
 
