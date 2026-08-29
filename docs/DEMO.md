@@ -47,6 +47,12 @@ Point at the ledger strip: "And every outcome is attributed: who steered, what i
 - Agent flails on a steer → Interrupt (it's a feature), re-steer with something rehearsed ("dark mode").
 - Tunnel dies → restart daemon via deploy state; worst case: rehearsal recording.
 
+## Beat changes for the deployed build (post open-steering)
+- **Gates are gone from the main flow** — invited steerers dispatch instantly (better RFS story: "anyone with the link is a real collaborator"). The arbitration story is now: driver badge + handoff + Interrupt + ✕ on queued tasks.
+- **New chat beat** (after audience steer): "and the room can just *talk* — humans and agents in one thread" → send a chat message, point at an agent's reply bubble.
+- **New parallel beat** (if the parallel pass deploys): steer Turbo and Fable back-to-back → "two agents, two providers, working at once — no queue."
+- **dropTask staging note**: only QUEUED tasks can be dropped (running ones refuse — use Interrupt for those). To demo the ✕: send two steers quickly, drop the second.
+
 ## Rehearsed steers (known-good, 15-25s each on spark)
 1. "Add a sticky-note board: click + to add a yellow note with editable text."
 2. "Make it confetti when a note is added."
