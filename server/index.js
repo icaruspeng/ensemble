@@ -100,6 +100,7 @@ const VIEWER_BLOCKED_MESSAGES = new Set([
   "resolveGate",
   "handoff",
   "interrupt",
+  "dropTask",
 ]);
 
 function newId(prefix) {
@@ -836,6 +837,32 @@ export async function buildServer(options = {}) {
     }
   }
 
+  function handleDropTask(client, rawTaskId) {
+    const { room } = client;
+    const taskId = asNonemptyString(rawTaskId);
+    const task = taskId ? room.tasks.get(taskId) : null;
+    if (!task) {
+      sendProtocolError(client, "That task is not in this room");
+      return;
+    }
+    const isDriver = client.actor.id === room.driverActorId;
+    if (!isDriver && task.author.id !== client.actor.id) {
+      sendProtocolError(client, "Only the driver or the author can remove a task");
+      return;
+    }
+    const queueIndex = room.taskQueue.indexOf(task);
+    if (queueIndex === -1 || task.status !== "queued") {
+      sendProtocolError(client, "That task is already running or finished");
+      return;
+    }
+    room.taskQueue.splice(queueIndex, 1);
+    task.status = "failed";
+    emit(room, "crew.task_failed", client.actor, {
+      taskId: task.taskId,
+      reason: `removed by ${client.actor.name}`,
+    });
+  }
+
   function dispatchTask(room, task) {
     const agent = findAgent(room, task.agentId);
     if (!agent) {
@@ -898,7 +925,11 @@ export async function buildServer(options = {}) {
       status: "proposed",
     };
     room.tasks.set(task.taskId, task);
-    if (author.id === room.driverActorId) dispatchTask(room, task);
+    // OPEN_STEERING: every steer-link holder dispatches directly (Google-Docs
+    // editor semantics); gates then only guard viewers-turned-steerers, which
+    // cannot happen — so gates become an opt-in policy via env.
+    const openSteering = envFlagEnabled(process.env.OPEN_STEERING, false);
+    if (openSteering || author.id === room.driverActorId) dispatchTask(room, task);
     else {
       const gateId = newId("gate");
       task.gateId = gateId;
@@ -1141,6 +1172,9 @@ export async function buildServer(options = {}) {
         case "interrupt":
           void handleInterrupt(client);
           break;
+        case "dropTask":
+          handleDropTask(client, message.taskId);
+          break;
         default:
           sendProtocolError(client, "Unknown message type");
       }
@@ -1262,6 +1296,15 @@ export async function buildServer(options = {}) {
       }
       for (const candidate of normalizedEvents) {
         const agent = findAgent(room, candidate.agentId);
+        // Stamp the directing human on results so every card carries its
+        // contributor's name — before emit, so live clients see it too.
+        if (candidate.type === "crew.result_published") {
+          const task = room.tasks.get(candidate.payload.taskId);
+          if (task) {
+            candidate.payload.byActorId = task.author.id;
+            candidate.payload.byActorName = task.author.name;
+          }
+        }
         const event = emit(room, candidate.type, agentActor(agent), candidate.payload);
         processAgentSideEffects(room, event);
       }
@@ -1364,6 +1407,32 @@ export async function buildServer(options = {}) {
       includeSecrets: inviteMatches(key, room.invites.steer),
       origin: requestOrigin(request),
     });
+  });
+
+  app.delete("/rooms/:roomId", async (request, reply) => {
+    const room = roomForId(request.params.roomId);
+    if (!room) return reply.code(404).send({ error: "room not found" });
+    if (room.pinned || room.roomId === "demo") {
+      return reply.code(400).send({ error: "the pinned demo room cannot be deleted" });
+    }
+    const queryKey = request.query?.k;
+    const headerKey = request.headers["x-ensemble-invite"];
+    const key =
+      (typeof queryKey === "string" && queryKey) ||
+      (typeof headerKey === "string" && headerKey);
+    if (!inviteMatches(key, room.invites.steer)) {
+      return reply.code(403).send({ error: "a steer key is required to delete a room" });
+    }
+    for (const client of [...state.clients]) {
+      if (client.room === room) {
+        try {
+          client.socket.close(4001, "room deleted");
+        } catch {}
+      }
+    }
+    state.rooms.delete(room.roomId);
+    if (provisioner.release) void provisioner.release(room.roomId);
+    return { ok: true, deleted: room.roomId };
   });
 
   app.get("/healthz", async () => ({ ok: true }));

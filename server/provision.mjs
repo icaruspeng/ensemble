@@ -851,6 +851,20 @@ export function createProvisioner(options = {}) {
     }
   }
 
+  async function release(roomId) {
+    const record = records.get(roomId);
+    records.delete(roomId);
+    const devboxId = record?.devboxId ?? record?.workspace?.devboxId;
+    if (!devboxId || record?.pinned) return false;
+    record.active = false;
+    try {
+      await post(`devboxes/${encodeURIComponent(devboxId)}/shutdown`, {});
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   return {
     get configured() {
       return !closed && configurationError === null;
@@ -858,6 +872,7 @@ export function createProvisioner(options = {}) {
     provision,
     registerPinned,
     touch,
+    release,
     close,
   };
 }

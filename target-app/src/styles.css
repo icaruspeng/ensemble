@@ -161,3 +161,16 @@ body.theme-dark {
     border-radius: 18px;
   }
 }
+
+/* interactive notes */
+.board { position: relative; display: flex; flex-wrap: wrap; gap: 16px; align-content: flex-start; padding: 20px; min-height: 55vh; }
+.board-empty { width: 100%; text-align: center; opacity: 0.5; font-size: 15px; margin-top: 12vh; }
+.note { width: 180px; min-height: 150px; border-radius: 10px; padding: 10px; display: flex; flex-direction: column; box-shadow: 0 6px 18px rgba(0,0,0,0.15); transform: rotate(-0.6deg); }
+.note:nth-child(even) { transform: rotate(0.8deg); }
+.note-text { flex: 1; border: none; background: transparent; resize: none; font: inherit; font-size: 14px; color: #333; outline: none; }
+.note-actions { display: flex; justify-content: space-between; align-items: center; margin-top: 6px; }
+.note-vote { border: none; background: rgba(0,0,0,0.08); border-radius: 999px; padding: 3px 10px; font-size: 12px; cursor: pointer; }
+.note-remove { border: none; background: transparent; opacity: 0.45; cursor: pointer; font-size: 12px; }
+.note-remove:hover { opacity: 1; }
+.note-add { position: fixed; right: 26px; bottom: 74px; width: 56px; height: 56px; border-radius: 50%; border: none; background: #ffd43b; font-size: 28px; cursor: pointer; box-shadow: 0 8px 20px rgba(0,0,0,0.25); }
+.theme-dark .note-text { color: #222; }
