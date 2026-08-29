@@ -18,7 +18,7 @@ from runloop_api_client import RunloopSDK
 
 ROOT = Path(__file__).resolve().parent.parent
 STATE = ROOT / "deploy" / "state_v2.json"
-KEEP_ALIVE = 5 * 3600
+KEEP_ALIVE = 8 * 3600
 
 
 def run_long(devbox, name, command, timeout=420):

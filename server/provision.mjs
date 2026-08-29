@@ -592,7 +592,7 @@ export function createProvisioner(options = {}) {
       const created = await post("devboxes", {
         name: `ens-${room.roomId}`,
         mounts: [{ type: "agent_mount", agent_name: "codex" }],
-        launch_parameters: { keep_alive_time_seconds: 7200 },
+        launch_parameters: { keep_alive_time_seconds: 14400 },
       });
       const devboxId = nonemptyString(created?.id);
       if (!devboxId) throw new Error("Runloop create response did not include id");
