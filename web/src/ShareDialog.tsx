@@ -237,13 +237,15 @@ function ShareLinkRow({ kind, label, link }: ShareLinkRowProps) {
 
       {showQr && link && (
         <div className="share-dialog__qr" id={qrId}>
-          <canvas
-            ref={canvasRef}
-            role="img"
-            aria-label={`QR code for ${label} link`}
-          >
-            QR code for {link}
-          </canvas>
+          <div className="share-dialog__qr-tile">
+            <canvas
+              ref={canvasRef}
+              role="img"
+              aria-label={`QR code for ${label} link`}
+            >
+              QR code for {link}
+            </canvas>
+          </div>
           <div>
             <strong>Scan to open</strong>
             <span>{label}</span>

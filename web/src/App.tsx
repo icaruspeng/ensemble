@@ -126,7 +126,8 @@ function deriveSession(events: EnsembleEvent[], room: RoomRecord | null): Derive
       case "crew.task_failed": {
         const payload = payloadOf(event, "crew.task_failed");
         const task = tasks.get(payload.taskId);
-        if (task) tasks.set(payload.taskId, { ...task, status: "failed" });
+        if (task && /^removed by\s/i.test(payload.reason)) tasks.delete(payload.taskId);
+        else if (task) tasks.set(payload.taskId, { ...task, status: "failed" });
         break;
       }
       case "crew.gate_requested": {
@@ -344,6 +345,7 @@ interface HeaderProps {
   isViewer: boolean;
   status: ConnectionStatus;
   roomName: string;
+  previewUrl: string;
   mockMode: boolean;
   onHandoff: (actorId: string) => void;
   onInterrupt: () => void;
@@ -359,6 +361,7 @@ function Header({
   isViewer,
   status,
   roomName,
+  previewUrl,
   mockMode,
   onHandoff,
   onInterrupt,
@@ -428,6 +431,11 @@ function Header({
       </div>
 
       <div className="topbar__actions">
+        {previewUrl && (
+          <a className="mobile-preview-link" href={previewUrl} target="_blank" rel="noreferrer">
+            open preview ↗
+          </a>
+        )}
         {isDriver && !isViewer && (
           <button className="interrupt-button" type="button" onClick={onInterrupt}>
             Interrupt
@@ -485,7 +493,9 @@ function CommentPins({ comments }: { comments: CommentView[] }) {
             <strong>{comment.actor.name}</strong>
             <p>{comment.text}</p>
           </div>
-          {comment.resolved && <span className="resolved-check">✓ Resolved</span>}
+          {comment.resolved && (
+            <span className="resolved-check"><span aria-hidden="true">✓</span> Resolved</span>
+          )}
         </article>
       ))}
     </div>
@@ -591,6 +601,7 @@ function AgentChip({ agent, compact = false }: { agent: AgentSpec; compact?: boo
 interface TimelineEventProps {
   event: EnsembleEvent;
   newest: boolean;
+  resultByActorName?: string;
   actors: Map<string, Actor>;
   agents: Map<string, AgentSpec>;
   comments: CommentView[];
@@ -604,6 +615,7 @@ interface TimelineEventProps {
 function TimelineEvent({
   event,
   newest,
+  resultByActorName,
   actors,
   agents,
   comments,
@@ -730,9 +742,14 @@ function TimelineEvent({
     }
     case "crew.result_published": {
       const payload = payloadOf(event, "crew.result_published");
+      const shippedFor = payload.byActorName ?? resultByActorName;
       body = (
         <article className="result-card">
-          <div className="result-card__top"><span>Published result</span><code>{payload.diffStat}</code></div>
+          <div className="result-card__top">
+            <span>Published result</span>
+            {shippedFor && <span className="result-card__shipped">shipped for {shippedFor}</span>}
+            <code>{payload.diffStat}</code>
+          </div>
           <p>{payload.summary}</p>
         </article>
       );
@@ -898,7 +915,204 @@ function TimelineEvent({
   );
 }
 
+type StreamPaneKind = "chat" | "work";
+
+function paneFoldKey(roomId: string, pane: StreamPaneKind) {
+  return `ensemble:pane-fold:${roomId}:${pane}`;
+}
+
+function initialPaneFold(roomId: string, pane: StreamPaneKind) {
+  try {
+    const stored = window.localStorage.getItem(paneFoldKey(roomId, pane));
+    if (stored !== null) return stored === "1";
+  } catch {
+    // Storage can be disabled without making the live room unusable.
+  }
+  return pane === "work" && window.matchMedia("(max-width: 767px)").matches;
+}
+
+function usePaneFold(roomId: string, pane: StreamPaneKind) {
+  const [folded, setFolded] = useState(() => initialPaneFold(roomId, pane));
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(paneFoldKey(roomId, pane), folded ? "1" : "0");
+    } catch {
+      // Keep the in-memory preference when storage is unavailable.
+    }
+  }, [folded, pane, roomId]);
+
+  return [folded, setFolded] as const;
+}
+
+function usePaneUnread(itemCount: number, folded: boolean, ready: boolean) {
+  const previousCount = useRef(itemCount);
+  const hasBaseline = useRef(false);
+  const [unread, setUnread] = useState(0);
+
+  useEffect(() => {
+    if (!hasBaseline.current) {
+      previousCount.current = itemCount;
+      if (ready) hasBaseline.current = true;
+      return;
+    }
+    const added = Math.max(0, itemCount - previousCount.current);
+    if (folded && added) setUnread((current) => current + added);
+    if (!folded) setUnread(0);
+    previousCount.current = itemCount;
+  }, [folded, itemCount, ready]);
+
+  return unread;
+}
+
+function StreamPaneHeader({
+  pane,
+  title,
+  subtitle,
+  count,
+  unread,
+  folded,
+  onToggle,
+}: {
+  pane: StreamPaneKind;
+  title: string;
+  subtitle: string;
+  count: number;
+  unread: number;
+  folded: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <header className="stream-pane__heading">
+      <button
+        className="panel-heading stream-pane__header stream-pane__toggle"
+        type="button"
+        onClick={onToggle}
+        aria-expanded={!folded}
+        aria-controls={`${pane}-stream-body`}
+      >
+        <span className="stream-pane__chevron" aria-hidden="true">⌄</span>
+        <span className="stream-pane__title">
+          <strong>{title}</strong>
+          <span>{subtitle}</span>
+        </span>
+        <span className="event-count">{count}</span>
+        {folded && unread > 0 && (
+          <span className="stream-pane__unread" aria-label={`${unread} unread`}>{unread}</span>
+        )}
+      </button>
+    </header>
+  );
+}
+
+function ChatEvent({
+  event,
+  actorId,
+  agents,
+  comments,
+  canComment,
+  activeCommentId,
+  onOpenComment,
+  onCloseComment,
+  onSubmitComment,
+  newest,
+}: {
+  event: EnsembleEvent;
+  actorId: string | null;
+  agents: Map<string, AgentSpec>;
+  comments: CommentView[];
+  canComment: boolean;
+  activeCommentId: string | null;
+  onOpenComment: (target: CommentTarget) => void;
+  onCloseComment: () => void;
+  onSubmitComment: (anchor: CommentAnchor, text: string) => boolean;
+  newest: boolean;
+}) {
+  const longPressTimer = useRef<number | null>(null);
+  const agentId = agentIdOfEvent(event);
+  const agent = agentId ? agents.get(agentId) : undefined;
+  const isAgent = event.type === "agent.message" || event.actor.kind === "agent";
+  const displayActor: Actor = isAgent
+    ? { ...event.actor, name: agent?.label ?? event.actor.name, kind: "agent" }
+    : event.actor;
+  const isSelf = !isAgent && event.actor.id === actorId;
+  const commentTarget: CommentTarget | null = canComment && event.type === "agent.message"
+    ? { anchor: { eventId: event.id }, label: "agent message" }
+    : null;
+
+  const beginLongPress = () => {
+    if (!commentTarget) return;
+    if (longPressTimer.current !== null) window.clearTimeout(longPressTimer.current);
+    longPressTimer.current = window.setTimeout(() => onOpenComment(commentTarget), 520);
+  };
+
+  const cancelLongPress = () => {
+    if (longPressTimer.current !== null) window.clearTimeout(longPressTimer.current);
+    longPressTimer.current = null;
+  };
+
+  useEffect(() => cancelLongPress, []);
+
+  const payload = event.payload as EventPayloads["crew.actor_post"] | EventPayloads["agent.message"];
+  const isSteer = event.type === "crew.actor_post" && payloadOf(event, "crew.actor_post").chat !== true;
+  const attachedComments = comments.filter((comment) => comment.anchor.eventId === event.id);
+
+  return (
+    <li
+      className={`chat-row${isAgent ? " chat-row--agent" : " chat-row--human"}${isSelf ? " chat-row--self" : ""}${newest ? " chat-row--new" : ""}`}
+      data-agent-id={agentId ?? undefined}
+      style={{
+        "--avatar-color": agent?.color || colorForActor(event.actor.id),
+        "--agent-color": agent?.color || (agentId ? fallbackAgentColor(agentId) : undefined),
+      } as CSSProperties}
+    >
+      <Avatar actor={displayActor} size="small" color={agent?.color} />
+      <div className="chat-row__content">
+        <article
+          className={`chat-bubble${commentTarget ? " annotatable" : ""}`}
+          onClick={() => commentTarget && onOpenComment(commentTarget)}
+          onPointerDown={beginLongPress}
+          onPointerUp={cancelLongPress}
+          onPointerCancel={cancelLongPress}
+          onPointerMove={cancelLongPress}
+          title={commentTarget ? "Click to pin a note to this message" : undefined}
+        >
+          <div className="chat-meta">
+            <strong>{displayActor.name}</strong>
+            <time dateTime={new Date(event.ts).toISOString()}>{eventTime(event.ts)}</time>
+            {commentTarget && (
+              <button
+                className="pin-action"
+                type="button"
+                onClick={(clickEvent) => {
+                  clickEvent.stopPropagation();
+                  onOpenComment(commentTarget);
+                }}
+              >
+                Pin note
+              </button>
+            )}
+          </div>
+          <p>{payload.text}</p>
+          {isSteer && <span className="chat-steer-tag">→ steer</span>}
+        </article>
+        <CommentPins comments={attachedComments} />
+        {activeCommentId === event.id && commentTarget && (
+          <InlineCommentComposer
+            target={commentTarget}
+            onCancel={onCloseComment}
+            onSubmit={(text) => onSubmitComment(commentTarget.anchor, text)}
+          />
+        )}
+      </div>
+    </li>
+  );
+}
+
 function Timeline({
+  roomId,
+  actorId,
+  status,
   events,
   actors,
   agents,
@@ -906,6 +1120,9 @@ function Timeline({
   canComment,
   onComment,
 }: {
+  roomId: string;
+  actorId: string | null;
+  status: ConnectionStatus;
   events: EnsembleEvent[];
   actors: Map<string, Actor>;
   agents: Map<string, AgentSpec>;
@@ -913,62 +1130,156 @@ function Timeline({
   canComment: boolean;
   onComment: (anchor: CommentAnchor, text: string) => boolean;
 }) {
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const followTail = useRef(true);
+  const chatEvents = useMemo(
+    () => events.filter((event) => event.type === "crew.actor_post" || event.type === "agent.message"),
+    [events],
+  );
+  const workEvents = useMemo(
+    () => events.filter((event) => event.type !== "crew.actor_post" && event.type !== "agent.message"),
+    [events],
+  );
+  const taskAuthorNames = useMemo(() => {
+    const names = new Map<string, string>();
+    for (const event of events) {
+      if (event.type !== "crew.task_dispatched") continue;
+      const payload = payloadOf(event, "crew.task_dispatched");
+      names.set(payload.taskId, actorName(actors, payload.byActorId));
+    }
+    return names;
+  }, [actors, events]);
+  const chatScrollRef = useRef<HTMLDivElement>(null);
+  const workScrollRef = useRef<HTMLDivElement>(null);
+  const followChatTail = useRef(true);
+  const followWorkTail = useRef(true);
+  const [chatFolded, setChatFolded] = usePaneFold(roomId, "chat");
+  const [workFolded, setWorkFolded] = usePaneFold(roomId, "work");
+  const chatUnread = usePaneUnread(chatEvents.length, chatFolded, status === "live");
+  const workUnread = usePaneUnread(workEvents.length, workFolded, status === "live");
   const [activeCommentId, setActiveCommentId] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!followTail.current || !scrollRef.current) return;
+    if (chatFolded || !followChatTail.current || !chatScrollRef.current) return;
     const frame = window.requestAnimationFrame(() => {
-      if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+      if (chatScrollRef.current) chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [events.length]);
+  }, [chatEvents.length, chatFolded]);
+
+  useEffect(() => {
+    if (workFolded || !followWorkTail.current || !workScrollRef.current) return;
+    const frame = window.requestAnimationFrame(() => {
+      if (workScrollRef.current) workScrollRef.current.scrollTop = workScrollRef.current.scrollHeight;
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [workEvents.length, workFolded]);
 
   return (
-    <section className="timeline-panel" aria-label="Living session timeline">
-      <header className="panel-heading timeline-heading">
-        <div>
-          <h1>Living timeline</h1>
-          <span>Agent work and room direction in one stream</span>
-        </div>
-        <span className="event-count">{events.length} events</span>
-      </header>
-      <div
-        className="timeline-scroll"
-        ref={scrollRef}
-        onScroll={(scrollEvent) => {
-          const element = scrollEvent.currentTarget;
-          followTail.current = element.scrollHeight - element.scrollTop - element.clientHeight < 120;
-        }}
-      >
-        {!events.length ? (
-          <div className="timeline-empty">
-            <div className="timeline-empty__mark" aria-hidden="true">E</div>
-            <strong>The room is listening</strong>
-            <p>The first steer, agent command, or teammate arrival will appear here.</p>
+    <div className="timeline-panel session-streams" aria-label="Session conversation and work log">
+      <section className={`stream-pane stream-pane--chat${chatFolded ? " is-collapsed" : ""}`} aria-label="Room chat">
+        <StreamPaneHeader
+          pane="chat"
+          title="💬 chat"
+          subtitle="crew and agents, together"
+          count={chatEvents.length}
+          unread={chatUnread}
+          folded={chatFolded}
+          onToggle={() => {
+            if (chatFolded) followChatTail.current = true;
+            setChatFolded((current) => !current);
+          }}
+        />
+        {!chatFolded && (
+          <div
+            id="chat-stream-body"
+            className="stream-pane__body chat-scroll"
+            ref={chatScrollRef}
+            onScroll={(scrollEvent) => {
+              const element = scrollEvent.currentTarget;
+              followChatTail.current = element.scrollHeight - element.scrollTop - element.clientHeight < 120;
+            }}
+          >
+            {!chatEvents.length ? (
+              <div className="timeline-empty chat-empty">
+                <strong>The room is listening</strong>
+                <p>Start a chat or steer the crew. Agent replies will gather here.</p>
+              </div>
+            ) : (
+              <ol className="chat-list" role="feed" aria-live="polite" aria-relevant="additions">
+                {chatEvents.map((event, index) => (
+                  <ChatEvent
+                    key={event.id}
+                    event={event}
+                    actorId={actorId}
+                    agents={agents}
+                    comments={comments}
+                    canComment={canComment}
+                    activeCommentId={activeCommentId}
+                    onOpenComment={(target) => setActiveCommentId(target.anchor.eventId ?? null)}
+                    onCloseComment={() => setActiveCommentId(null)}
+                    onSubmitComment={onComment}
+                    newest={index === chatEvents.length - 1}
+                  />
+                ))}
+              </ol>
+            )}
           </div>
-        ) : (
-          <ol className="timeline-list" role="feed" aria-live="polite" aria-relevant="additions">
-            {events.map((event, index) => (
-              <TimelineEvent
-                key={event.id}
-                event={event}
-                newest={index === events.length - 1}
-                actors={actors}
-                agents={agents}
-                comments={comments}
-                canComment={canComment}
-                activeCommentId={activeCommentId}
-                onOpenComment={(target) => setActiveCommentId(target.anchor.eventId ?? null)}
-                onCloseComment={() => setActiveCommentId(null)}
-                onSubmitComment={onComment}
-              />
-            ))}
-          </ol>
         )}
-      </div>
-    </section>
+      </section>
+
+      <section className={`stream-pane stream-pane--work work-log${workFolded ? " is-collapsed" : ""}`} aria-label="Agent work log">
+        <StreamPaneHeader
+          pane="work"
+          title="🛠 work log"
+          subtitle="commands, changes, and room state"
+          count={workEvents.length}
+          unread={workUnread}
+          folded={workFolded}
+          onToggle={() => {
+            if (workFolded) followWorkTail.current = true;
+            setWorkFolded((current) => !current);
+          }}
+        />
+        {!workFolded && (
+          <div
+            id="work-stream-body"
+            className="stream-pane__body timeline-scroll work-log-scroll work-log__scroll"
+            ref={workScrollRef}
+            onScroll={(scrollEvent) => {
+              const element = scrollEvent.currentTarget;
+              followWorkTail.current = element.scrollHeight - element.scrollTop - element.clientHeight < 120;
+            }}
+          >
+            {!workEvents.length ? (
+              <div className="timeline-empty work-log__empty">
+                <strong>No work logged yet</strong>
+                <p>Tasks, commands, diffs, and workspace events will appear here.</p>
+              </div>
+            ) : (
+              <ol className="timeline-list work-log__list" role="feed" aria-live="polite" aria-relevant="additions">
+                {workEvents.map((event, index) => (
+                  <TimelineEvent
+                    key={event.id}
+                    event={event}
+                    newest={index === workEvents.length - 1}
+                    resultByActorName={event.type === "crew.result_published"
+                      ? taskAuthorNames.get(payloadOf(event, "crew.result_published").taskId)
+                      : undefined}
+                    actors={actors}
+                    agents={agents}
+                    comments={comments}
+                    canComment={canComment}
+                    activeCommentId={activeCommentId}
+                    onOpenComment={(target) => setActiveCommentId(target.anchor.eventId ?? null)}
+                    onCloseComment={() => setActiveCommentId(null)}
+                    onSubmitComment={onComment}
+                  />
+                ))}
+              </ol>
+            )}
+          </div>
+        )}
+      </section>
+    </div>
   );
 }
 
@@ -1030,12 +1341,17 @@ function PreviewPanel({
   );
 }
 
+type ComposerMode = "steer" | "chat";
+
 function Composer({
   text,
   setText,
   onSend,
+  mode,
+  onModeChange,
   status,
   isDriver,
+  canSteer,
   agents,
   selectedAgentId,
   onSelectAgent,
@@ -1048,8 +1364,11 @@ function Composer({
   text: string;
   setText: (text: string) => void;
   onSend: () => void;
+  mode: ComposerMode;
+  onModeChange: (mode: ComposerMode) => void;
   status: ConnectionStatus;
   isDriver: boolean;
+  canSteer: boolean;
   agents: AgentSpec[];
   selectedAgentId: string;
   onSelectAgent: (agentId: string) => void;
@@ -1068,17 +1387,40 @@ function Composer({
 
   return (
     <form
-      className={`steer-composer${mobile ? " steer-composer--mobile" : ""}`}
+      className={`steer-composer steer-composer--${mode} composer--${mode}${mobile ? " steer-composer--mobile" : ""}`}
       onSubmit={(event) => {
         event.preventDefault();
         onSend();
       }}
     >
-      <div className="composer-label">
-        <label htmlFor={mobile ? "mobile-steer" : "desktop-steer"}>Steer the room</label>
-        <span>{isDriver ? "Dispatches directly" : "Driver review required"}</span>
+      <div className="composer-mode-tabs" role="group" aria-label="Message mode">
+        <button
+          type="button"
+          className={mode === "steer" ? "is-selected" : ""}
+          aria-pressed={mode === "steer"}
+          disabled={!canSteer}
+          onClick={() => onModeChange("steer")}
+        >
+          steer
+        </button>
+        <button
+          type="button"
+          className={mode === "chat" ? "is-selected" : ""}
+          aria-pressed={mode === "chat"}
+          onClick={() => onModeChange("chat")}
+        >
+          chat
+        </button>
       </div>
-      {!!agents.length && (
+      <div className="composer-label">
+        <label htmlFor={mobile ? "mobile-steer" : "desktop-steer"}>
+          {mode === "chat" ? "Chat with the room" : "Steer the room"}
+        </label>
+        <span>
+          {mode === "chat" ? "Visible to everyone" : isDriver ? "Dispatches directly" : "Driver review required"}
+        </span>
+      </div>
+      {mode === "steer" && !!agents.length && (
         <div className="composer-target" role="group" aria-label="Choose an agent for this steer">
           <span>to:</span>
           <div className="composer-target__chips">
@@ -1104,12 +1446,12 @@ function Composer({
           value={text}
           onChange={(event) => setText(event.target.value)}
           onKeyDown={handleKey}
-          placeholder="Describe the next visible change"
-          disabled={status !== "live"}
+          placeholder={mode === "chat" ? "Message the crew" : "Describe the next visible change"}
+          disabled={status !== "live" || (mode === "steer" && !canSteer)}
           aria-invalid={!!error}
           aria-describedby={error ? `${mobile ? "mobile" : "desktop"}-steer-error` : undefined}
         />
-        <button className="send-button" type="submit" disabled={status !== "live" || !text.trim()}>
+        <button className="send-button" type="submit" disabled={status !== "live" || (mode === "steer" && !canSteer) || !text.trim()}>
           Send
         </button>
       </div>
@@ -1128,10 +1470,18 @@ function TaskQueue({
   tasks,
   actors,
   agents,
+  actorId,
+  isDriver,
+  canManage,
+  onDrop,
 }: {
   tasks: TaskView[];
   actors: Map<string, Actor>;
   agents: Map<string, AgentSpec>;
+  actorId: string | null;
+  isDriver: boolean;
+  canManage: boolean;
+  onDrop: (taskId: string) => void;
 }) {
   const visibleTasks = tasks.filter((task) => task.status !== "completed");
   return (
@@ -1144,19 +1494,35 @@ function TaskQueue({
         {!visibleTasks.length ? (
           <div className="control-empty"><strong>Queue clear</strong><span>The next accepted steer lands here.</span></div>
         ) : (
-          visibleTasks.map((task) => (
+          visibleTasks.map((task) => {
+            const canDrop = canManage && task.status === "queued" && (isDriver || task.byActorId === actorId);
+            return (
             <article className={`task-item task-item--${task.status}`} key={task.taskId}>
               <div className="task-item__top">
                 <span className="task-status-wrap">
                   <span className="task-status">{task.status}</span>
                   {task.agentId && agents.has(task.agentId) && <AgentChip agent={agents.get(task.agentId)!} compact />}
                 </span>
-                <code>{task.taskId}</code>
+                <span className="task-item__meta">
+                  <code>{task.taskId}</code>
+                  {canDrop && (
+                    <button
+                      className="task-drop"
+                      type="button"
+                      onClick={() => onDrop(task.taskId)}
+                      aria-label={`Remove task: ${task.text}`}
+                      title="Remove queued task"
+                    >
+                      ✕
+                    </button>
+                  )}
+                </span>
               </div>
               <p>{task.text}</p>
               <span className="task-author">Directed by {actorName(actors, task.byActorId)}</span>
             </article>
-          ))
+            );
+          })
         )}
       </div>
     </section>
@@ -1425,24 +1791,6 @@ function roomInviteLinks(
   return { steerLink, viewLink };
 }
 
-function MobileViewerControls({
-  taskCount,
-  gateCount,
-  onOpenSheet,
-}: {
-  taskCount: number;
-  gateCount: number;
-  onOpenSheet: (sheet: "queue" | "gates") => void;
-}) {
-  return (
-    <div className="mobile-viewer-controls" aria-label="View-only session controls">
-      <span>View only</span>
-      <button type="button" onClick={() => onOpenSheet("queue")}>Queue <b>{taskCount}</b></button>
-      <button type="button" onClick={() => onOpenSheet("gates")}>Gates <b>{gateCount}</b></button>
-    </div>
-  );
-}
-
 function SessionPage({
   roomId,
   keyToken,
@@ -1457,6 +1805,7 @@ function SessionPage({
   const queryName = (params.get("name") ?? "").trim();
   const [joinedName, setJoinedName] = useState(queryName);
   const [steerText, setSteerText] = useState("");
+  const [composerMode, setComposerMode] = useState<ComposerMode>("steer");
   const [selectedAgentId, setSelectedAgentId] = useState("");
   const [composerError, setComposerError] = useState("");
   const [actionMessage, setActionMessage] = useState("");
@@ -1497,6 +1846,21 @@ function SessionPage({
   }, [mockMode, roomName]);
 
   useEffect(() => {
+    if (session.role === "viewer") setComposerMode("chat");
+  }, [session.role]);
+
+  useEffect(() => {
+    if (mockMode || roomId === "demo" || session.status !== "live" || session.role !== "steerer") return;
+    const steerKey = keyToken || session.room?.invites?.steer || "";
+    if (!steerKey) return;
+    try {
+      window.localStorage.setItem(`ensemble:steer-key:${roomId}`, steerKey);
+    } catch {
+      // A blocked localStorage should not interrupt a joined session.
+    }
+  }, [keyToken, mockMode, roomId, session.role, session.room?.invites?.steer, session.status]);
+
+  useEffect(() => {
     if (!derived.agents.length) {
       setSelectedAgentId("");
       return;
@@ -1523,10 +1887,19 @@ function SessionPage({
     return () => desktop.removeEventListener("change", closeMobileSheetAtDesktop);
   }, []);
 
-  const sendSteer = () => {
+  const sendComposer = () => {
     const text = steerText.trim();
     if (!text) {
-      setComposerError("Describe the change you want to make.");
+      setComposerError(composerMode === "chat" ? "Write a message to the room." : "Describe the change you want to make.");
+      return;
+    }
+    if (composerMode === "chat") {
+      if (!session.send({ type: "chat", text })) {
+        setComposerError("The chat message could not be sent while disconnected.");
+        return;
+      }
+      setSteerText("");
+      setComposerError("");
       return;
     }
     if (isViewer) {
@@ -1539,6 +1912,11 @@ function SessionPage({
     }
     setSteerText("");
     setComposerError("");
+  };
+
+  const dropTask = (taskId: string) => {
+    const sent = session.send({ type: "dropTask", taskId });
+    setActionMessage(sent ? "Queued task removed." : "The queued task could not be removed.");
   };
 
   const sendComment = (anchor: CommentAnchor, text: string) =>
@@ -1574,6 +1952,7 @@ function SessionPage({
           isViewer={isViewer}
           status={session.status}
           roomName={roomName}
+          previewUrl={derived.previewUrl}
           mockMode={mockMode}
           onHandoff={handoff}
           onInterrupt={interrupt}
@@ -1582,6 +1961,9 @@ function SessionPage({
 
         <div className="workspace">
           <Timeline
+            roomId={roomId}
+            actorId={session.actorId}
+            status={session.status}
             events={session.events}
             actors={actors}
             agents={agentDirectory}
@@ -1597,58 +1979,70 @@ function SessionPage({
               roomName={roomName}
             />
             <div className={`control-deck${isViewer ? " control-deck--viewer" : ""}`}>
-              {!isViewer && (
-                <Composer
-                  text={steerText}
-                  setText={(text) => {
-                    setSteerText(text);
-                    setComposerError("");
-                  }}
-                  onSend={sendSteer}
-                  status={session.status}
-                  isDriver={isDriver}
-                  agents={derived.agents}
-                  selectedAgentId={selectedAgentId}
-                  onSelectAgent={setSelectedAgentId}
-                  error={composerError}
-                />
-              )}
+              <Composer
+                text={steerText}
+                setText={(text) => {
+                  setSteerText(text);
+                  setComposerError("");
+                }}
+                onSend={sendComposer}
+                mode={composerMode}
+                onModeChange={(mode) => {
+                  if (mode === "steer" && isViewer) return;
+                  setComposerMode(mode);
+                  setComposerError("");
+                }}
+                status={session.status}
+                isDriver={isDriver}
+                canSteer={!isViewer}
+                agents={derived.agents}
+                selectedAgentId={selectedAgentId}
+                onSelectAgent={setSelectedAgentId}
+                error={composerError}
+              />
               <div className="queue-gate-grid">
-                <TaskQueue tasks={derived.tasks} actors={actors} agents={agentDirectory} />
+                <TaskQueue
+                  tasks={derived.tasks}
+                  actors={actors}
+                  agents={agentDirectory}
+                  actorId={session.actorId}
+                  isDriver={isDriver && !isViewer}
+                  canManage={!isViewer}
+                  onDrop={dropTask}
+                />
                 <GatePanel gates={derived.gates} isDriver={isDriver && !isViewer} driverName={driverName} onResolve={resolveGate} />
               </div>
             </div>
           </aside>
         </div>
 
-        {isViewer ? (
-          <MobileViewerControls
+        <div className="mobile-composer-wrap">
+          <Composer
+            text={steerText}
+            setText={(text) => {
+              setSteerText(text);
+              setComposerError("");
+            }}
+            onSend={sendComposer}
+            mode={composerMode}
+            onModeChange={(mode) => {
+              if (mode === "steer" && isViewer) return;
+              setComposerMode(mode);
+              setComposerError("");
+            }}
+            status={session.status}
+            isDriver={isDriver}
+            canSteer={!isViewer}
+            agents={derived.agents}
+            selectedAgentId={selectedAgentId}
+            onSelectAgent={setSelectedAgentId}
+            error={composerError}
+            mobile
             taskCount={visibleTaskCount}
             gateCount={derived.gates.length}
             onOpenSheet={setMobileSheet}
           />
-        ) : (
-          <div className="mobile-composer-wrap">
-            <Composer
-              text={steerText}
-              setText={(text) => {
-                setSteerText(text);
-                setComposerError("");
-              }}
-              onSend={sendSteer}
-              status={session.status}
-              isDriver={isDriver}
-              agents={derived.agents}
-              selectedAgentId={selectedAgentId}
-              onSelectAgent={setSelectedAgentId}
-              error={composerError}
-              mobile
-              taskCount={visibleTaskCount}
-              gateCount={derived.gates.length}
-              onOpenSheet={setMobileSheet}
-            />
-          </div>
-        )}
+        </div>
 
         <Ledger rows={derived.ledger} presence={presence} />
       </main>
@@ -1657,7 +2051,15 @@ function SessionPage({
 
       {mobileSheet === "queue" && (
         <MobileSheet title="Task queue" onClose={() => setMobileSheet(null)}>
-          <TaskQueue tasks={derived.tasks} actors={actors} agents={agentDirectory} />
+          <TaskQueue
+            tasks={derived.tasks}
+            actors={actors}
+            agents={agentDirectory}
+            actorId={session.actorId}
+            isDriver={isDriver && !isViewer}
+            canManage={!isViewer}
+            onDrop={dropTask}
+          />
         </MobileSheet>
       )}
       {mobileSheet === "gates" && (

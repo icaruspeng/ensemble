@@ -338,8 +338,17 @@ export function useSession(
       }
 
       sendRef.current = (message) => {
-        if (!active || mockRole === "viewer") return false;
+        if (!active) return false;
         setTransportMessage("");
+
+        if (message.type === "chat") {
+          const text = message.text.trim();
+          if (!text) return false;
+          emit("crew.actor_post", current, { text, chat: true });
+          return true;
+        }
+
+        if (mockRole === "viewer") return false;
 
         if (message.type === "steer") {
           const text = message.text.trim();

@@ -72,13 +72,13 @@ export interface EventPayloads {
   "actor.joined": { name: string; kind: ActorKind };
   "actor.left": Record<string, never>;
   "driver.changed": { toActorId: string };
-  "crew.actor_post": { text: string };
+  "crew.actor_post": { text: string; chat?: boolean };
   "crew.task_dispatched": { taskId: string; text: string; byActorId: string; agentId?: string };
   "crew.task_completed": { taskId: string; tokens: number; costUsd: number };
   "crew.task_failed": { taskId: string; reason: string };
   "crew.gate_requested": { gateId: string; question: string; taskId: string };
   "crew.gate_resolved": { gateId: string; approved: boolean; byActorId: string };
-  "crew.result_published": { taskId: string; summary: string; diffStat: string };
+  "crew.result_published": { taskId: string; summary: string; diffStat: string; byActorName?: string };
   "agent.turn_started": { taskId: string; agentId?: string };
   "agent.turn_completed": { taskId: string; tokens: number; costUsd: number; agentId?: string };
   "agent.thought": { text: string; agentId?: string };
@@ -104,10 +104,12 @@ export interface EnsembleEvent<K extends EventType = EventType> {
 
 export type ClientMessage =
   | { type: "steer"; text: string; agentId?: string }
+  | { type: "chat"; text: string }
   | { type: "comment"; anchor: CommentAnchor; text: string }
   | { type: "resolveGate"; gateId: string; approved: boolean }
   | { type: "handoff"; toActorId: string }
-  | { type: "interrupt" };
+  | { type: "interrupt" }
+  | { type: "dropTask"; taskId: string };
 
 export type ConnectionStatus = "idle" | "connecting" | "live" | "reconnecting" | "offline";
 

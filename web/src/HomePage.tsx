@@ -263,6 +263,15 @@ function roomDate(value: HomeRoom["createdAt"]) {
   return { label: ROOM_DATE_FORMAT.format(date), iso: date.toISOString() };
 }
 
+function storedSteerKey(roomId: string) {
+  if (typeof window === "undefined") return null;
+  try {
+    return nonEmptyString(window.localStorage.getItem(`ensemble:steer-key:${roomId}`));
+  } catch {
+    return null;
+  }
+}
+
 export function HomePage({ onNavigate }: { onNavigate: (href: string) => void }) {
   const [rooms, setRooms] = useState<HomeRoom[]>([]);
   const [loadState, setLoadState] = useState<LoadState>("loading");
@@ -278,6 +287,8 @@ export function HomePage({ onNavigate }: { onNavigate: (href: string) => void })
   const [formErrors, setFormErrors] = useState<FormErrors>({});
   const [createError, setCreateError] = useState("");
   const [creating, setCreating] = useState(false);
+  const [deletingRooms, setDeletingRooms] = useState<Record<string, boolean>>({});
+  const [deleteErrors, setDeleteErrors] = useState<Record<string, string>>({});
 
   useEffect(() => {
     document.title = "Ensemble | Multiplayer AI";
@@ -388,6 +399,52 @@ export function HomePage({ onNavigate }: { onNavigate: (href: string) => void })
     }
   };
 
+  const deleteRoom = async (roomId: string) => {
+    if (roomId === "demo" || deletingRooms[roomId]) return;
+
+    const steerKey = storedSteerKey(roomId);
+    if (!steerKey) return;
+
+    setDeletingRooms((current) => ({ ...current, [roomId]: true }));
+    setDeleteErrors((current) => {
+      const next = { ...current };
+      delete next[roomId];
+      return next;
+    });
+
+    try {
+      const response = await fetch(`/rooms/${encodeURIComponent(roomId)}`, {
+        method: "DELETE",
+        headers: {
+          Accept: "application/json",
+          "x-ensemble-invite": steerKey,
+        },
+      });
+      const payload = await readResponse(response);
+      if (!response.ok) {
+        throw new Error(responseError(payload, `The task could not be deleted (${response.status}).`));
+      }
+
+      setRooms((current) => current.filter((room) => room.roomId !== roomId));
+      try {
+        window.localStorage.removeItem(`ensemble:steer-key:${roomId}`);
+      } catch {
+        // The room is already gone; storage cleanup is best effort.
+      }
+    } catch (error) {
+      setDeleteErrors((current) => ({
+        ...current,
+        [roomId]: error instanceof Error ? error.message : "The task could not be deleted.",
+      }));
+    } finally {
+      setDeletingRooms((current) => {
+        const next = { ...current };
+        delete next[roomId];
+        return next;
+      });
+    }
+  };
+
   return (
     <main className="home-page">
       <header className="home-topbar">
@@ -407,24 +464,26 @@ export function HomePage({ onNavigate }: { onNavigate: (href: string) => void })
 
       <div className="home-layout">
         <section className="home-hero" aria-labelledby="home-title">
+          <span className="home-hero__orb" aria-hidden="true" />
           <span className="home-hero__eyebrow">LIVE COLLABORATIVE AGENTS</span>
           <h1 id="home-title">The multiplayer moment for AI</h1>
           <p>Open a task, choose the agents, and watch every steer and outcome land in one shared room.</p>
-          <dl className="home-signal-grid">
-            <div>
-              <dt>Shared</dt>
-              <dd>One living timeline</dd>
-            </div>
-            <div>
-              <dt>Directed</dt>
-              <dd>Every outcome attributed</dd>
-            </div>
-            <div>
-              <dt>Live</dt>
-              <dd>Preview while agents work</dd>
-            </div>
-          </dl>
         </section>
+
+        <dl className="home-signal-grid">
+          <div>
+            <dt>Shared</dt>
+            <dd>One living timeline</dd>
+          </div>
+          <div>
+            <dt>Directed</dt>
+            <dd>Every outcome attributed</dd>
+          </div>
+          <div>
+            <dt>Live</dt>
+            <dd>Preview while agents work</dd>
+          </div>
+        </dl>
 
         <div className="home-command-stack">
           <section className="home-panel home-task-panel" data-load-state={loadState} aria-labelledby="room-list-title" aria-busy={loadState === "loading"}>
@@ -466,16 +525,44 @@ export function HomePage({ onNavigate }: { onNavigate: (href: string) => void })
                 <ol className="home-task-list">
                   {rooms.map((room) => {
                     const created = roomDate(room.createdAt);
+                    const steerKey = room.roomId === "demo" ? null : storedSteerKey(room.roomId);
+                    const deleting = !!deletingRooms[room.roomId];
+                    const deleteError = deleteErrors[room.roomId];
                     return (
-                      <li className="home-task-row" key={room.roomId}>
+                      <li
+                        className="home-task-row"
+                        key={room.roomId}
+                        aria-busy={deleting || undefined}
+                        data-deleting={deleting ? "true" : undefined}
+                      >
                         <div className="home-task-row__identity">
                           <strong>{room.name}</strong>
                           <code>{room.roomId}</code>
+                          {deleteError && (
+                            <p className="home-task-row__delete-error" role="alert">{deleteError}</p>
+                          )}
                         </div>
                         <span className={`home-status home-status--${statusTone(room.status)}`}>
                           <i aria-hidden="true" />{statusLabel(room.status)}
                         </span>
-                        <time dateTime={created.iso}>{created.label}</time>
+                        <div className="home-task-row__actions">
+                          <time dateTime={created.iso}>{created.label}</time>
+                          {steerKey && (
+                            <button
+                              className="home-task-row__delete"
+                              type="button"
+                              disabled={deleting}
+                              aria-label={deleting ? `Deleting ${room.name}` : `Delete ${room.name}`}
+                              title={deleting ? "Deleting task" : "Delete task"}
+                              onClick={() => void deleteRoom(room.roomId)}
+                            >
+                              <span aria-hidden="true">{deleting ? "…" : "×"}</span>
+                            </button>
+                          )}
+                          <span className="home-visually-hidden" role="status" aria-live="polite">
+                            {deleting ? `Deleting ${room.name}.` : ""}
+                          </span>
+                        </div>
                       </li>
                     );
                   })}
@@ -543,6 +630,11 @@ export function HomePage({ onNavigate }: { onNavigate: (href: string) => void })
                           value={agent.agentId}
                           checked={selected}
                           onChange={() => toggleAgent(agent.agentId)}
+                        />
+                        <span
+                          className="home-agent-choice__orb"
+                          data-agent-id={agent.agentId}
+                          aria-hidden="true"
                         />
                         <span className="home-agent-choice__copy">
                           <strong>{agent.shortLabel}</strong>
