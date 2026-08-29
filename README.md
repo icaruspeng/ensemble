@@ -11,7 +11,8 @@ Ensemble makes the agent session a **shared place**: a live Codex agent working 
 ## What it does
 
 - **Create a task** — name it, state the goal, pick your crew: *Codex Turbo* (gpt-5.3-codex-spark), *Codex Deep* (gpt-5.5), *Claude Code* (via Reflex). Each task gets its own **Runloop devbox workspace, provisioned on demand**, with a live app preview on a public tunnel URL.
-- **Invite like a Google Doc** — every task mints *can-steer* and *can-view* links (the QR is just one rendering). Viewers watch; steerers propose; the **driver** dispatches. Driver control hands off by tapping an avatar.
+- **Invite like a Google Doc** — every task mints *can-steer* and *can-view* links (the QR is just one rendering). Anyone with a steer link dispatches work directly, like an editor in a shared doc; the **driver** keeps Interrupt, task removal, and handoff (tap an avatar). Viewers watch everything — and can talk in the room's chat.
+- **A living whiteboard** — every task's app starts from an interactive, signed Roomboard (add/edit/vote/delete sticky notes, each stamped with its author) that the room then reshapes through the agents, live.
 - **Steer the room** — anyone's instruction flows through arbitration (`crew.gate_requested` → driver approves) to a **live Codex agent**; thoughts, commands, and diffs stream to everyone; the app hot-reloads in the shared preview. Direct any steer to a specific agent with the "to:" chips.
 - **Import your solo session** — paste a repo URL and your existing Codex session ID: the agent wakes up in a fresh devbox *with the full memory of the session you started alone* — now multiplayer.
 - **Receipts** — the ledger attributes every outcome: who steered, which agent, how many tokens, how many dollars, what shipped.
