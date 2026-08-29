@@ -433,7 +433,9 @@ export function createProvisioner(options = {}) {
             executionId,
           )}/wait_for_status`,
           {
-            statuses: ["completed", ...TERMINAL_EXECUTION_STATUSES],
+            // Runloop's DevboxExecutionStatus enum only accepts "completed"
+            // here — terminal failures are detected from the returned view.
+            statuses: ["completed"],
             timeout_seconds: EXECUTION_WAIT_SECONDS,
           },
         );
