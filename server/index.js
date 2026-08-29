@@ -1175,6 +1175,12 @@ export async function buildServer(options = {}) {
         case "dropTask":
           handleDropTask(client, message.taskId);
           break;
+        case "chat": {
+          const chatText = asNonemptyString(message.text);
+          if (!chatText) sendProtocolError(client, "A chat message needs text");
+          else emit(client.room, "crew.actor_post", client.actor, { text: chatText, chat: true });
+          break;
+        }
         default:
           sendProtocolError(client, "Unknown message type");
       }
