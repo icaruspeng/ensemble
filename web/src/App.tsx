@@ -9,12 +9,12 @@ import {
   type ReactNode,
   type CSSProperties,
 } from "react";
-import { createPortal } from "react-dom";
-import QRCode from "qrcode";
+import { HomePage } from "./HomePage";
+import { ShareDialog } from "./ShareDialog";
 import { useSession } from "./useSession";
 import type {
   Actor,
-  ClientMessage,
+  AgentSpec,
   CommentAnchor,
   CommentView,
   ConnectionStatus,
@@ -22,7 +22,9 @@ import type {
   EventPayloads,
   GateView,
   LedgerRow,
+  RoomRecord,
   TaskView,
+  WorkspaceStatus,
 } from "./types";
 
 const TIME_FORMAT = new Intl.DateTimeFormat([], {
@@ -38,29 +40,51 @@ const TOKEN_FORMAT = new Intl.NumberFormat([], {
 });
 
 const AVATAR_COLORS = ["#5e9d91", "#8c83a6", "#b07d68", "#718eae", "#9a8b58", "#8f7392"];
+const AGENT_COLORS: Record<string, string> = {
+  turbo: "#7bc4b2",
+  deep: "#8fa3d1",
+  claude: "#d49a72",
+};
 
 interface DerivedSession {
   actors: Map<string, Actor>;
   presence: Actor[];
+  agents: AgentSpec[];
+  registeredAgents: AgentSpec[];
   tasks: TaskView[];
   gates: GateView[];
   comments: CommentView[];
   ledger: LedgerRow[];
   previewUrl: string;
+  workspaceStatus: WorkspaceStatus;
+  workspaceDetail: string;
 }
 
 function payloadOf<K extends keyof EventPayloads>(event: EnsembleEvent, type: K) {
   return event.payload as EventPayloads[K];
 }
 
-function deriveSession(events: EnsembleEvent[]): DerivedSession {
+function fallbackAgentColor(agentId: string) {
+  if (AGENT_COLORS[agentId]) return AGENT_COLORS[agentId];
+  let hash = 0;
+  for (let index = 0; index < agentId.length; index += 1) {
+    hash = (hash * 31 + agentId.charCodeAt(index)) | 0;
+  }
+  return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
+}
+
+function deriveSession(events: EnsembleEvent[], room: RoomRecord | null): DerivedSession {
   const actors = new Map<string, Actor>();
   const presence = new Map<string, Actor>();
+  const agents = new Map<string, AgentSpec>((room?.agents ?? []).map((agent) => [agent.agentId, agent]));
+  const registeredAgentIds = new Set<string>();
   const tasks = new Map<string, TaskView>();
   const gates = new Map<string, GateView>();
   const comments = new Map<string, CommentView>();
   let ledger: LedgerRow[] = [];
-  let previewUrl = "";
+  let previewUrl = room?.workspace.previewUrl ?? "";
+  let workspaceStatus: WorkspaceStatus = room?.workspace.status ?? "provisioning";
+  let workspaceDetail = "";
 
   for (const event of events) {
     actors.set(event.actor.id, event.actor);
@@ -82,6 +106,7 @@ function deriveSession(events: EnsembleEvent[]): DerivedSession {
           taskId: payload.taskId,
           text: payload.text,
           byActorId: payload.byActorId,
+          agentId: payload.agentId,
           status: "queued",
         });
         break;
@@ -154,7 +179,28 @@ function deriveSession(events: EnsembleEvent[]): DerivedSession {
         break;
       case "preview.updated":
         previewUrl = payloadOf(event, "preview.updated").url;
+        if (previewUrl && workspaceStatus === "provisioning") workspaceStatus = "ready";
         break;
+      case "workspace.status": {
+        const payload = payloadOf(event, "workspace.status");
+        workspaceStatus = payload.status;
+        workspaceDetail = payload.detail ?? "";
+        break;
+      }
+      case "agent.registered": {
+        const payload = payloadOf(event, "agent.registered");
+        const existing = agents.get(payload.agentId);
+        agents.set(payload.agentId, {
+          agentId: payload.agentId,
+          label: payload.label,
+          engine: existing?.engine ?? "runner",
+          model: payload.model,
+          reflexAgentId: existing?.reflexAgentId,
+          color: existing?.color ?? fallbackAgentColor(payload.agentId),
+        });
+        registeredAgentIds.add(payload.agentId);
+        break;
+      }
       default:
         break;
     }
@@ -163,11 +209,15 @@ function deriveSession(events: EnsembleEvent[]): DerivedSession {
   return {
     actors,
     presence: [...presence.values()].filter((actor) => actor.kind === "human"),
+    agents: [...agents.values()],
+    registeredAgents: [...agents.values()].filter((agent) => registeredAgentIds.has(agent.agentId)),
     tasks: [...tasks.values()],
     gates: [...gates.values()].filter((gate) => !gate.resolution),
     comments: [...comments.values()],
     ledger,
     previewUrl,
+    workspaceStatus,
+    workspaceDetail,
   };
 }
 
@@ -246,14 +296,22 @@ function trapFocus(event: globalThis.KeyboardEvent, container: HTMLElement) {
   }
 }
 
-function Avatar({ actor, size = "medium" }: { actor: Actor; size?: "small" | "medium" | "large" }) {
+function Avatar({
+  actor,
+  size = "medium",
+  color,
+}: {
+  actor: Actor;
+  size?: "small" | "medium" | "large";
+  color?: string;
+}) {
   return (
     <span
-      className={`avatar avatar--${size}`}
-      style={{ "--avatar-color": colorForActor(actor.id) } as CSSProperties}
+      className={`avatar avatar--${size}${actor.kind === "agent" ? " avatar--agent" : ""}`}
+      style={{ "--avatar-color": color ?? colorForActor(actor.id) } as CSSProperties}
       aria-hidden="true"
     >
-      {actor.kind === "agent" ? "CX" : actor.kind === "system" ? "EN" : initials(actor.name)}
+      {actor.kind === "system" ? "EN" : initials(actor.name)}
     </span>
   );
 }
@@ -277,136 +335,65 @@ function ConnectionMark({ status }: { status: ConnectionStatus }) {
   );
 }
 
-function SessionQr() {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const largeCanvasRef = useRef<HTMLCanvasElement>(null);
-  const qrDialogRef = useRef<HTMLElement>(null);
-  const qrTriggerRef = useRef<HTMLButtonElement>(null);
-  const [expanded, setExpanded] = useState(false);
-  const sessionUrl = window.location.href;
-
-  useEffect(() => {
-    if (!canvasRef.current) return;
-    void QRCode.toCanvas(canvasRef.current, sessionUrl, {
-      width: 160,
-      margin: 2,
-      errorCorrectionLevel: "M",
-      color: { dark: "#dce3df", light: "#111419" },
-    });
-  }, [sessionUrl]);
-
-  useEffect(() => {
-    if (!expanded || !largeCanvasRef.current) return;
-    void QRCode.toCanvas(largeCanvasRef.current, sessionUrl, {
-      width: 260,
-      margin: 3,
-      errorCorrectionLevel: "M",
-      color: { dark: "#dce3df", light: "#111419" },
-    });
-
-    const app = document.querySelector<HTMLElement>(".app-shell");
-    const appWasInert = app?.hasAttribute("inert") ?? false;
-    if (!appWasInert) app?.setAttribute("inert", "");
-    qrDialogRef.current?.focus();
-
-    const onKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        setExpanded(false);
-        return;
-      }
-      if (qrDialogRef.current) trapFocus(event, qrDialogRef.current);
-    };
-
-    window.addEventListener("keydown", onKeyDown);
-    return () => {
-      window.removeEventListener("keydown", onKeyDown);
-      if (!appWasInert) app?.removeAttribute("inert");
-      qrTriggerRef.current?.focus();
-    };
-  }, [expanded, sessionUrl]);
-
-  return (
-    <div className="session-qr-wrap">
-      <button
-        ref={qrTriggerRef}
-        className="session-qr"
-        type="button"
-        title="Enlarge the session QR code"
-        aria-haspopup="dialog"
-        aria-expanded={expanded}
-        aria-controls="session-qr-dialog"
-        onClick={() => setExpanded(true)}
-      >
-        <canvas ref={canvasRef} aria-hidden="true" />
-        <span className="visually-hidden">Enlarge the QR code for this session</span>
-      </button>
-      {expanded && createPortal(
-        <div className="qr-overlay" role="presentation" onMouseDown={() => setExpanded(false)}>
-          <section
-            ref={qrDialogRef}
-            id="session-qr-dialog"
-            tabIndex={-1}
-            className="qr-dialog"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="session-qr-title"
-            aria-describedby="session-qr-description session-qr-url"
-            onMouseDown={(event) => event.stopPropagation()}
-          >
-            <figure className="qr-figure">
-              <canvas ref={largeCanvasRef} role="img" aria-label={`QR code for ${sessionUrl}`}>
-                QR code for {sessionUrl}
-              </canvas>
-              <figcaption className="qr-dialog__url" id="session-qr-url">{sessionUrl}</figcaption>
-            </figure>
-            <strong id="session-qr-title">Join this session</strong>
-            <span id="session-qr-description">Scan with a phone camera</span>
-            <button type="button" onClick={() => setExpanded(false)}>Close</button>
-          </section>
-        </div>,
-        document.body,
-      )}
-    </div>
-  );
-}
-
 interface HeaderProps {
   actors: Actor[];
+  agents: AgentSpec[];
   actorId: string | null;
   driverActorId: string | null;
   isDriver: boolean;
+  isViewer: boolean;
   status: ConnectionStatus;
+  roomName: string;
   mockMode: boolean;
   onHandoff: (actorId: string) => void;
   onInterrupt: () => void;
+  onShare: () => void;
 }
 
 function Header({
   actors,
+  agents,
   actorId,
   driverActorId,
   isDriver,
+  isViewer,
   status,
+  roomName,
   mockMode,
   onHandoff,
   onInterrupt,
+  onShare,
 }: HeaderProps) {
   return (
     <header className="topbar">
       <div className="brand-lockup">
         <span className="brand-word">ENSEMBLE</span>
-        <span className="session-title">Roomboard live build</span>
+        <span className="session-title">{roomName}</span>
         {mockMode && <span className="mode-label">Mock</span>}
+        {isViewer && <span className="viewer-badge">View only</span>}
       </div>
 
-      <div className="presence" aria-label="People in this session">
+      <div className="presence" aria-label="People and agents in this session">
         <ConnectionMark status={status} />
         <div className="presence__avatars">
+          {agents.map((agent) => {
+            const actor: Actor = { id: `agent:${agent.agentId}`, name: agent.label, kind: "agent" };
+            return (
+              <span
+                className="presence-person presence-person--agent"
+                key={agent.agentId}
+                title={`${agent.label}, ${agent.model}`}
+                role="img"
+                aria-label={`${agent.label}, agent using ${agent.model}`}
+              >
+                <Avatar actor={actor} size="medium" color={agent.color || fallbackAgentColor(agent.agentId)} />
+              </span>
+            );
+          })}
           {actors.map((actor) => {
             const driver = actor.id === driverActorId;
             const self = actor.id === actorId;
-            const canHandoff = isDriver && !self;
+            const canHandoff = !isViewer && isDriver && !self;
             const accessibleName = `${actor.name}${self ? ", you" : ""}${driver ? ", current driver" : ""}`;
             const content = (
               <>
@@ -441,12 +428,14 @@ function Header({
       </div>
 
       <div className="topbar__actions">
-        {isDriver && (
+        {isDriver && !isViewer && (
           <button className="interrupt-button" type="button" onClick={onInterrupt}>
             Interrupt
           </button>
         )}
-        <SessionQr />
+        <button className="share-button" type="button" onClick={onShare}>
+          Share
+        </button>
       </div>
     </header>
   );
@@ -577,11 +566,35 @@ function diffStat(patch: string) {
   return { additions, removals };
 }
 
+function agentIdOfEvent(event: EnsembleEvent) {
+  const payload = event.payload as { agentId?: unknown };
+  return typeof payload.agentId === "string" && payload.agentId ? payload.agentId : null;
+}
+
+function agentShortLabel(agent: AgentSpec) {
+  if (agent.agentId === "claude") return "Claude";
+  return agent.label.replace(/^Codex\s+/i, "");
+}
+
+function AgentChip({ agent, compact = false }: { agent: AgentSpec; compact?: boolean }) {
+  return (
+    <span
+      className={`agent-chip${compact ? " agent-chip--compact" : ""}`}
+      style={{ "--agent-color": agent.color || fallbackAgentColor(agent.agentId) } as CSSProperties}
+      title={`${agent.label} uses ${agent.model}`}
+    >
+      {agentShortLabel(agent)}
+    </span>
+  );
+}
+
 interface TimelineEventProps {
   event: EnsembleEvent;
   newest: boolean;
   actors: Map<string, Actor>;
+  agents: Map<string, AgentSpec>;
   comments: CommentView[];
+  canComment: boolean;
   activeCommentId: string | null;
   onOpenComment: (target: CommentTarget) => void;
   onCloseComment: () => void;
@@ -592,16 +605,22 @@ function TimelineEvent({
   event,
   newest,
   actors,
+  agents,
   comments,
+  canComment,
   activeCommentId,
   onOpenComment,
   onCloseComment,
   onSubmitComment,
 }: TimelineEventProps) {
   const longPressTimer = useRef<number | null>(null);
-  const commentable = event.type === "agent.diff" || event.type === "agent.message";
+  const agentId = agentIdOfEvent(event);
+  const agent = agentId ? agents.get(agentId) : undefined;
+  const commentable = canComment && (event.type === "agent.diff" || event.type === "agent.message");
   const commentTarget: CommentTarget | null =
-    event.type === "agent.diff"
+    !canComment
+      ? null
+      : event.type === "agent.diff"
       ? { anchor: { eventId: event.id, file: payloadOf(event, "agent.diff").file }, label: payloadOf(event, "agent.diff").file }
       : event.type === "agent.message"
         ? { anchor: { eventId: event.id }, label: "agent message" }
@@ -629,6 +648,32 @@ function TimelineEvent({
   let body: ReactNode;
 
   switch (event.type) {
+    case "room.created": {
+      const payload = payloadOf(event, "room.created");
+      body = <CompactEvent title={`${payload.name} created`} detail={payload.goal} tone="accent" />;
+      break;
+    }
+    case "workspace.status": {
+      const payload = payloadOf(event, "workspace.status");
+      const title = payload.status === "ready"
+        ? "Workspace ready"
+        : payload.status === "error"
+          ? "Workspace provisioning failed"
+          : "Workspace provisioning";
+      body = (
+        <CompactEvent
+          title={title}
+          detail={payload.detail || (payload.status === "provisioning" ? "Preparing the development environment" : "Preview and agents can connect")}
+          tone={payload.status === "ready" ? "success" : payload.status === "error" ? "danger" : "warning"}
+        />
+      );
+      break;
+    }
+    case "agent.registered": {
+      const payload = payloadOf(event, "agent.registered");
+      body = <CompactEvent title={`${payload.label} joined the room`} detail={payload.model} tone="accent" />;
+      break;
+    }
     case "actor.joined": {
       const payload = payloadOf(event, "actor.joined");
       body = <CompactEvent title={`${payload.name} joined the room`} detail={payload.kind === "human" ? "Presence connected" : `${payload.kind} connected`} tone="success" />;
@@ -695,7 +740,7 @@ function TimelineEvent({
     }
     case "agent.turn_started": {
       const payload = payloadOf(event, "agent.turn_started");
-      body = <CompactEvent title="Codex started a turn" detail={payload.taskId} tone="accent" />;
+      body = <CompactEvent title={`${agent?.label ?? event.actor.name} started a turn`} detail={payload.taskId} tone="accent" />;
       break;
     }
     case "agent.turn_completed": {
@@ -730,7 +775,7 @@ function TimelineEvent({
       const stat = diffStat(payload.patch);
       body = (
         <div
-          className="annotatable"
+          className={commentTarget ? "annotatable" : undefined}
           onPointerDown={beginLongPress}
           onPointerUp={cancelLongPress}
           onPointerCancel={cancelLongPress}
@@ -740,22 +785,24 @@ function TimelineEvent({
             <summary>
               <span className="diff-file">{payload.file}</span>
               <span className="diff-stat"><b>+{stat.additions}</b><i>-{stat.removals}</i></span>
-              <button
-                className="pin-action"
-                type="button"
-                onClick={(clickEvent) => {
-                  clickEvent.preventDefault();
-                  clickEvent.stopPropagation();
-                  if (commentTarget) onOpenComment(commentTarget);
-                }}
-              >
-                Pin note
-              </button>
+              {commentTarget && (
+                <button
+                  className="pin-action"
+                  type="button"
+                  onClick={(clickEvent) => {
+                    clickEvent.preventDefault();
+                    clickEvent.stopPropagation();
+                    onOpenComment(commentTarget);
+                  }}
+                >
+                  Pin note
+                </button>
+              )}
             </summary>
             <pre
               className="diff-code"
               onClick={() => commentTarget && onOpenComment(commentTarget)}
-              title="Click to pin a note to this diff"
+              title={commentTarget ? "Click to pin a note to this diff" : undefined}
             >
               <code>{payload.patch.split("\n").map((line, index) => <span className={diffLineClass(line)} key={`${event.id}-${index}`}>{line || " "}</span>)}</code>
             </pre>
@@ -768,26 +815,28 @@ function TimelineEvent({
       const payload = payloadOf(event, "agent.message");
       body = (
         <article
-          className="agent-message annotatable"
+          className={`agent-message${commentTarget ? " annotatable" : ""}`}
           onClick={() => commentTarget && onOpenComment(commentTarget)}
           onPointerDown={beginLongPress}
           onPointerUp={cancelLongPress}
           onPointerCancel={cancelLongPress}
           onPointerMove={cancelLongPress}
-          title="Click to pin a note to this message"
+          title={commentTarget ? "Click to pin a note to this message" : undefined}
         >
           <div className="agent-message__top">
             <MetaLine actor={event.actor} ts={event.ts} label="reported" />
-            <button
-              className="pin-action"
-              type="button"
-              onClick={(clickEvent) => {
-                clickEvent.stopPropagation();
-                if (commentTarget) onOpenComment(commentTarget);
-              }}
-            >
-              Pin note
-            </button>
+            {commentTarget && (
+              <button
+                className="pin-action"
+                type="button"
+                onClick={(clickEvent) => {
+                  clickEvent.stopPropagation();
+                  onOpenComment(commentTarget);
+                }}
+              >
+                Pin note
+              </button>
+            )}
           </div>
           <p>{payload.text}</p>
         </article>
@@ -821,15 +870,20 @@ function TimelineEvent({
   return (
     <li
       role="article"
-      className={`event-row${newest ? " event-row--new" : ""}${commentable ? " event-row--commentable" : ""}`}
+      className={`event-row${newest ? " event-row--new" : ""}${commentable ? " event-row--commentable" : ""}${agent ? " event-row--agent" : ""}`}
       data-event-type={event.type}
-      style={{ "--avatar-color": colorForActor(event.actor.id) } as CSSProperties}
+      data-agent-id={agentId ?? undefined}
+      style={{
+        "--avatar-color": agent?.color || colorForActor(event.actor.id),
+        "--agent-color": agent?.color || (agentId ? fallbackAgentColor(agentId) : undefined),
+      } as CSSProperties}
     >
       <div className="event-rail">
-        <Avatar actor={event.actor} size="small" />
+        <Avatar actor={event.actor} size="small" color={agent?.color} />
         <span className="event-rail__line" aria-hidden="true" />
       </div>
-      <div className="event-main">
+      <div className={`event-main${agent ? " event-main--agent" : ""}`}>
+        {agent && <AgentChip agent={agent} />}
         {body}
         <CommentPins comments={attachedComments} />
         {activeCommentId === event.id && commentTarget && (
@@ -847,12 +901,16 @@ function TimelineEvent({
 function Timeline({
   events,
   actors,
+  agents,
   comments,
+  canComment,
   onComment,
 }: {
   events: EnsembleEvent[];
   actors: Map<string, Actor>;
+  agents: Map<string, AgentSpec>;
   comments: CommentView[];
+  canComment: boolean;
   onComment: (anchor: CommentAnchor, text: string) => boolean;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -898,7 +956,9 @@ function Timeline({
                 event={event}
                 newest={index === events.length - 1}
                 actors={actors}
+                agents={agents}
                 comments={comments}
+                canComment={canComment}
                 activeCommentId={activeCommentId}
                 onOpenComment={(target) => setActiveCommentId(target.anchor.eventId ?? null)}
                 onCloseComment={() => setActiveCommentId(null)}
@@ -912,32 +972,57 @@ function Timeline({
   );
 }
 
-function PreviewPanel({ url }: { url: string }) {
+function PreviewPanel({
+  url,
+  status,
+  detail,
+  roomName,
+}: {
+  url: string;
+  status: WorkspaceStatus;
+  detail: string;
+  roomName: string;
+}) {
+  const ready = status === "ready";
   return (
     <section className="preview-panel" aria-label="Live app preview">
       <header className="panel-heading preview-heading">
         <div>
           <h2>Live preview</h2>
-          <span>{previewHost(url)}</span>
+          <span>{ready ? previewHost(url) : status === "error" ? "Workspace error" : "Provisioning workspace"}</span>
         </div>
-        {url && !url.startsWith("data:") && (
+        {ready && url && !url.startsWith("data:") && (
           <a href={url} target="_blank" rel="noreferrer">Open</a>
         )}
       </header>
       <div className="preview-stage">
-        {url ? (
+        {ready && url ? (
           <iframe
             key={url}
             src={url}
-            title="Roomboard live application preview"
+            title={`${roomName} live application preview`}
             sandbox="allow-forms allow-modals allow-pointer-lock allow-popups allow-same-origin allow-scripts"
             referrerPolicy="no-referrer"
           />
         ) : (
-          <div className="preview-empty">
-            <span className="preview-empty__frame" aria-hidden="true" />
-            <strong>Preview tunnel not published</strong>
-            <p>The live app will dock here after the first preview update.</p>
+          <div className={`preview-empty preview-empty--${status}`}>
+            <span className="preview-empty__frame" aria-hidden="true">
+              {status === "provisioning" && <i />}
+            </span>
+            <strong>
+              {status === "provisioning"
+                ? "Preparing your workspace"
+                : status === "error"
+                  ? "Workspace unavailable"
+                  : "Preview tunnel not published"}
+            </strong>
+            <p>
+              {detail || (status === "provisioning"
+                ? "The repository, preview, and agent runtimes are being connected."
+                : status === "error"
+                  ? "The room remains available for connected agents."
+                  : "The live app will dock here after the first preview update.")}
+            </p>
           </div>
         )}
       </div>
@@ -951,6 +1036,9 @@ function Composer({
   onSend,
   status,
   isDriver,
+  agents,
+  selectedAgentId,
+  onSelectAgent,
   error,
   mobile = false,
   taskCount = 0,
@@ -962,6 +1050,9 @@ function Composer({
   onSend: () => void;
   status: ConnectionStatus;
   isDriver: boolean;
+  agents: AgentSpec[];
+  selectedAgentId: string;
+  onSelectAgent: (agentId: string) => void;
   error: string;
   mobile?: boolean;
   taskCount?: number;
@@ -987,6 +1078,25 @@ function Composer({
         <label htmlFor={mobile ? "mobile-steer" : "desktop-steer"}>Steer the room</label>
         <span>{isDriver ? "Dispatches directly" : "Driver review required"}</span>
       </div>
+      {!!agents.length && (
+        <div className="composer-target" role="group" aria-label="Choose an agent for this steer">
+          <span>to:</span>
+          <div className="composer-target__chips">
+            {agents.map((agent) => (
+              <button
+                key={agent.agentId}
+                type="button"
+                className={agent.agentId === selectedAgentId ? "is-selected" : ""}
+                style={{ "--agent-color": agent.color || fallbackAgentColor(agent.agentId) } as CSSProperties}
+                aria-pressed={agent.agentId === selectedAgentId}
+                onClick={() => onSelectAgent(agent.agentId)}
+              >
+                {agentShortLabel(agent)}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
       <div className="composer-input-row">
         <textarea
           id={mobile ? "mobile-steer" : "desktop-steer"}
@@ -1014,7 +1124,15 @@ function Composer({
   );
 }
 
-function TaskQueue({ tasks, actors }: { tasks: TaskView[]; actors: Map<string, Actor> }) {
+function TaskQueue({
+  tasks,
+  actors,
+  agents,
+}: {
+  tasks: TaskView[];
+  actors: Map<string, Actor>;
+  agents: Map<string, AgentSpec>;
+}) {
   const visibleTasks = tasks.filter((task) => task.status !== "completed");
   return (
     <section className="control-section task-queue">
@@ -1029,7 +1147,10 @@ function TaskQueue({ tasks, actors }: { tasks: TaskView[]; actors: Map<string, A
           visibleTasks.map((task) => (
             <article className={`task-item task-item--${task.status}`} key={task.taskId}>
               <div className="task-item__top">
-                <span className="task-status">{task.status}</span>
+                <span className="task-status-wrap">
+                  <span className="task-status">{task.status}</span>
+                  {task.agentId && agents.has(task.agentId) && <AgentChip agent={agents.get(task.agentId)!} compact />}
+                </span>
                 <code>{task.taskId}</code>
               </div>
               <p>{task.text}</p>
@@ -1234,7 +1355,7 @@ function JoinDialog({ initialName, mockMode, onJoin }: { initialName: string; mo
       <section ref={dialogRef} tabIndex={-1} className="join-dialog" role="dialog" aria-modal="true" aria-labelledby="join-title">
         <div className="join-dialog__brand">ENSEMBLE</div>
         <h1 id="join-title">Join the live build</h1>
-        <p>Watch the agent work, steer the next change, and leave notes directly on its output.</p>
+        <p>Watch the agents work and join your team while the room builds.</p>
         <form onSubmit={submit}>
           <label htmlFor="join-name">Your name</label>
           <input
@@ -1250,28 +1371,100 @@ function JoinDialog({ initialName, mockMode, onJoin }: { initialName: string; mo
             aria-invalid={!!error}
             aria-describedby={error ? "join-name-error" : "join-name-help"}
           />
-          <span className="input-help" id="join-name-help">This name appears on steers, comments, and outcomes.</span>
+          <span className="input-help" id="join-name-help">This name appears in the room presence.</span>
           {error && <p className="form-error" id="join-name-error" role="alert">{error}</p>}
           <button className="join-button" type="submit">Enter session</button>
         </form>
-        {mockMode && <span className="join-dialog__mock">Standalone 90-second session</span>}
+        {mockMode && <span className="join-dialog__mock">Standalone two-agent session</span>}
       </section>
     </div>
   );
 }
 
-export default function App() {
-  const params = useMemo(() => new URLSearchParams(window.location.search), []);
+type RoomWithLinkVariants = RoomRecord & {
+  links?: { steer?: string; view?: string; canSteer?: string; canView?: string };
+  steerLink?: string;
+  viewLink?: string;
+};
+
+function absoluteUrl(value: string | undefined) {
+  if (!value) return undefined;
+  try {
+    return new URL(value, window.location.origin).href;
+  } catch {
+    return undefined;
+  }
+}
+
+function roomInviteLinks(
+  room: RoomRecord | null,
+  roomId: string,
+  key: string,
+  role: "steerer" | "viewer" | null,
+  mockMode: boolean,
+) {
+  const shaped = room as RoomWithLinkVariants | null;
+  const buildFromToken = (token: string | undefined) => {
+    if (!token) return undefined;
+    const url = new URL(`/s/${encodeURIComponent(roomId)}`, window.location.origin);
+    url.searchParams.set("k", token);
+    if (mockMode) url.searchParams.set("mock", "1");
+    return url.href;
+  };
+  const currentRoleLink = () => {
+    if (!key) return undefined;
+    return buildFromToken(key);
+  };
+
+  const steerLink = absoluteUrl(shaped?.links?.steer ?? shaped?.links?.canSteer ?? shaped?.steerLink)
+    ?? buildFromToken(shaped?.invites?.steer)
+    ?? (role === "steerer" ? currentRoleLink() : undefined);
+  const viewLink = absoluteUrl(shaped?.links?.view ?? shaped?.links?.canView ?? shaped?.viewLink)
+    ?? buildFromToken(shaped?.invites?.view)
+    ?? (role === "viewer" ? currentRoleLink() : undefined);
+  return { steerLink, viewLink };
+}
+
+function MobileViewerControls({
+  taskCount,
+  gateCount,
+  onOpenSheet,
+}: {
+  taskCount: number;
+  gateCount: number;
+  onOpenSheet: (sheet: "queue" | "gates") => void;
+}) {
+  return (
+    <div className="mobile-viewer-controls" aria-label="View-only session controls">
+      <span>View only</span>
+      <button type="button" onClick={() => onOpenSheet("queue")}>Queue <b>{taskCount}</b></button>
+      <button type="button" onClick={() => onOpenSheet("gates")}>Gates <b>{gateCount}</b></button>
+    </div>
+  );
+}
+
+function SessionPage({
+  roomId,
+  keyToken,
+  params,
+  mockMode,
+}: {
+  roomId: string;
+  keyToken: string;
+  params: URLSearchParams;
+  mockMode: boolean;
+}) {
   const queryName = (params.get("name") ?? "").trim();
-  const mockMode = params.get("mock") === "1";
   const [joinedName, setJoinedName] = useState(queryName);
   const [steerText, setSteerText] = useState("");
+  const [selectedAgentId, setSelectedAgentId] = useState("");
   const [composerError, setComposerError] = useState("");
   const [actionMessage, setActionMessage] = useState("");
   const [mobileSheet, setMobileSheet] = useState<"queue" | "gates" | null>(null);
+  const [shareOpen, setShareOpen] = useState(false);
 
-  const session = useSession(joinedName, mockMode);
-  const derived = useMemo(() => deriveSession(session.events), [session.events]);
+  const session = useSession({ name: joinedName, roomId, key: keyToken, mockMode });
+  const derived = useMemo(() => deriveSession(session.events, session.room), [session.events, session.room]);
 
   const presence = useMemo(() => {
     if (!session.actorId || derived.presence.some((actor) => actor.id === session.actorId)) return derived.presence;
@@ -1284,13 +1477,34 @@ export default function App() {
     return directory;
   }, [derived.actors, presence]);
 
+  const agentDirectory = useMemo(
+    () => new Map(derived.agents.map((agent) => [agent.agentId, agent])),
+    [derived.agents],
+  );
+
+  const isViewer = session.role === "viewer";
   const isDriver = !!session.actorId && session.actorId === session.driverActorId;
   const driverName = actorName(actors, session.driverActorId);
   const visibleTaskCount = derived.tasks.filter((task) => task.status !== "completed").length;
+  const roomName = session.room?.name ?? (mockMode ? "Roomboard multi-agent build" : `Session ${roomId}`);
+  const shareLinks = useMemo(
+    () => roomInviteLinks(session.room, roomId, keyToken, session.role, mockMode),
+    [keyToken, mockMode, roomId, session.role, session.room],
+  );
 
   useEffect(() => {
-    document.title = `${mockMode ? "Mock | " : ""}Ensemble | Roomboard live build`;
-  }, [mockMode]);
+    document.title = `${mockMode ? "Mock | " : ""}${roomName} | Ensemble`;
+  }, [mockMode, roomName]);
+
+  useEffect(() => {
+    if (!derived.agents.length) {
+      setSelectedAgentId("");
+      return;
+    }
+    if (!derived.agents.some((agent) => agent.agentId === selectedAgentId)) {
+      setSelectedAgentId(derived.agents[0].agentId);
+    }
+  }, [derived.agents, selectedAgentId]);
 
   useEffect(() => {
     if (!actionMessage) return;
@@ -1315,7 +1529,11 @@ export default function App() {
       setComposerError("Describe the change you want to make.");
       return;
     }
-    if (!session.send({ type: "steer", text })) {
+    if (isViewer) {
+      setComposerError("This invite is view only.");
+      return;
+    }
+    if (!session.send({ type: "steer", text, agentId: selectedAgentId || undefined })) {
       setComposerError("The steer could not be sent while disconnected.");
       return;
     }
@@ -1324,7 +1542,7 @@ export default function App() {
   };
 
   const sendComment = (anchor: CommentAnchor, text: string) =>
-    session.send({ type: "comment", anchor, text });
+    !isViewer && session.send({ type: "comment", anchor, text });
 
   const resolveGate = (gateId: string, approved: boolean) => {
     const sent = session.send({ type: "resolveGate", gateId, approved });
@@ -1346,59 +1564,91 @@ export default function App() {
 
   return (
     <>
-      <main className="app-shell">
+      <main className={`app-shell${isViewer ? " app-shell--viewer" : ""}`}>
         <Header
           actors={presence}
+          agents={derived.registeredAgents}
           actorId={session.actorId}
           driverActorId={session.driverActorId}
           isDriver={isDriver}
+          isViewer={isViewer}
           status={session.status}
+          roomName={roomName}
           mockMode={mockMode}
           onHandoff={handoff}
           onInterrupt={interrupt}
+          onShare={() => setShareOpen(true)}
         />
 
         <div className="workspace">
-          <Timeline events={session.events} actors={actors} comments={derived.comments} onComment={sendComment} />
+          <Timeline
+            events={session.events}
+            actors={actors}
+            agents={agentDirectory}
+            comments={derived.comments}
+            canComment={!isViewer}
+            onComment={sendComment}
+          />
           <aside className="right-rail" aria-label="Preview and session controls">
-            <PreviewPanel url={derived.previewUrl} />
-            <div className="control-deck">
-              <Composer
-                text={steerText}
-                setText={(text) => {
-                  setSteerText(text);
-                  setComposerError("");
-                }}
-                onSend={sendSteer}
-                status={session.status}
-                isDriver={isDriver}
-                error={composerError}
-              />
+            <PreviewPanel
+              url={derived.previewUrl}
+              status={derived.workspaceStatus}
+              detail={derived.workspaceDetail}
+              roomName={roomName}
+            />
+            <div className={`control-deck${isViewer ? " control-deck--viewer" : ""}`}>
+              {!isViewer && (
+                <Composer
+                  text={steerText}
+                  setText={(text) => {
+                    setSteerText(text);
+                    setComposerError("");
+                  }}
+                  onSend={sendSteer}
+                  status={session.status}
+                  isDriver={isDriver}
+                  agents={derived.agents}
+                  selectedAgentId={selectedAgentId}
+                  onSelectAgent={setSelectedAgentId}
+                  error={composerError}
+                />
+              )}
               <div className="queue-gate-grid">
-                <TaskQueue tasks={derived.tasks} actors={actors} />
-                <GatePanel gates={derived.gates} isDriver={isDriver} driverName={driverName} onResolve={resolveGate} />
+                <TaskQueue tasks={derived.tasks} actors={actors} agents={agentDirectory} />
+                <GatePanel gates={derived.gates} isDriver={isDriver && !isViewer} driverName={driverName} onResolve={resolveGate} />
               </div>
             </div>
           </aside>
         </div>
 
-        <div className="mobile-composer-wrap">
-          <Composer
-            text={steerText}
-            setText={(text) => {
-              setSteerText(text);
-              setComposerError("");
-            }}
-            onSend={sendSteer}
-            status={session.status}
-            isDriver={isDriver}
-            error={composerError}
-            mobile
+        {isViewer ? (
+          <MobileViewerControls
             taskCount={visibleTaskCount}
             gateCount={derived.gates.length}
             onOpenSheet={setMobileSheet}
           />
-        </div>
+        ) : (
+          <div className="mobile-composer-wrap">
+            <Composer
+              text={steerText}
+              setText={(text) => {
+                setSteerText(text);
+                setComposerError("");
+              }}
+              onSend={sendSteer}
+              status={session.status}
+              isDriver={isDriver}
+              agents={derived.agents}
+              selectedAgentId={selectedAgentId}
+              onSelectAgent={setSelectedAgentId}
+              error={composerError}
+              mobile
+              taskCount={visibleTaskCount}
+              gateCount={derived.gates.length}
+              onOpenSheet={setMobileSheet}
+            />
+          </div>
+        )}
 
         <Ledger rows={derived.ledger} presence={presence} />
       </main>
@@ -1407,16 +1657,91 @@ export default function App() {
 
       {mobileSheet === "queue" && (
         <MobileSheet title="Task queue" onClose={() => setMobileSheet(null)}>
-          <TaskQueue tasks={derived.tasks} actors={actors} />
+          <TaskQueue tasks={derived.tasks} actors={actors} agents={agentDirectory} />
         </MobileSheet>
       )}
       {mobileSheet === "gates" && (
         <MobileSheet title="Driver gates" onClose={() => setMobileSheet(null)}>
-          <GatePanel gates={derived.gates} isDriver={isDriver} driverName={driverName} onResolve={resolveGate} />
+          <GatePanel gates={derived.gates} isDriver={isDriver && !isViewer} driverName={driverName} onResolve={resolveGate} />
         </MobileSheet>
       )}
 
       {!joinedName && <JoinDialog initialName={queryName} mockMode={mockMode} onJoin={setJoinedName} />}
+      <ShareDialog open={shareOpen} onClose={() => setShareOpen(false)} {...shareLinks} />
     </>
   );
+}
+
+interface BrowserRoute {
+  pathname: string;
+  search: string;
+}
+
+function readBrowserRoute(): BrowserRoute {
+  return { pathname: window.location.pathname, search: window.location.search };
+}
+
+function NotFound({ onHome }: { onHome: () => void }) {
+  useEffect(() => {
+    document.title = "Session not found | Ensemble";
+  }, []);
+
+  return (
+    <main className="not-found-page">
+      <div>
+        <span className="brand-word">ENSEMBLE</span>
+        <h1>Session not found</h1>
+        <p>This link does not point to an Ensemble room.</p>
+        <button type="button" onClick={onHome}>Back home</button>
+      </div>
+    </main>
+  );
+}
+
+export default function App() {
+  const [route, setRoute] = useState<BrowserRoute>(readBrowserRoute);
+
+  useEffect(() => {
+    const onPopState = () => setRoute(readBrowserRoute());
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, []);
+
+  const navigate = (href: string) => {
+    const destination = new URL(href, window.location.href);
+    if (destination.origin !== window.location.origin) {
+      window.location.assign(destination.href);
+      return;
+    }
+    window.history.pushState({}, "", `${destination.pathname}${destination.search}${destination.hash}`);
+    setRoute(readBrowserRoute());
+  };
+
+  const params = new URLSearchParams(route.search);
+  const mockMode = params.get("mock") === "1";
+  const sessionMatch = route.pathname.match(/^\/s\/([^/]+)\/?$/);
+
+  if (mockMode && route.pathname === "/") {
+    const keyToken = params.get("k") || (params.get("role") === "view" ? "mock-view" : "mock-steer");
+    return <SessionPage key={`mock:${keyToken}`} roomId="mock" keyToken={keyToken} params={params} mockMode />;
+  }
+
+  if (route.pathname === "/" || route.pathname === "") {
+    return <HomePage onNavigate={navigate} />;
+  }
+
+  if (sessionMatch) {
+    const roomId = decodeURIComponent(sessionMatch[1]);
+    return (
+      <SessionPage
+        key={`${roomId}:${params.get("k") ?? ""}:${mockMode}`}
+        roomId={roomId}
+        keyToken={params.get("k") ?? ""}
+        params={params}
+        mockMode={mockMode}
+      />
+    );
+  }
+
+  return <NotFound onHome={() => navigate("/")} />;
 }

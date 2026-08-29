@@ -167,6 +167,19 @@ button:disabled {
   text-transform: uppercase;
 }
 
+.viewer-badge {
+  padding: 3px 6px;
+  border: 1px solid rgb(211 170 99 / 45%);
+  border-radius: 3px;
+  background: #1b1812;
+  color: var(--warning);
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 760;
+  white-space: nowrap;
+  text-transform: uppercase;
+}
+
 .presence {
   min-width: 0;
   justify-content: flex-end;
@@ -254,6 +267,19 @@ button.presence-person:hover .avatar {
   font-size: 12px;
 }
 
+.avatar--agent {
+  border-radius: var(--radius-control);
+  box-shadow: inset 0 0 0 1px rgb(9 13 15 / 28%);
+}
+
+.presence-person--agent {
+  min-width: 38px;
+}
+
+.presence-person--agent .avatar {
+  color: #09100e;
+}
+
 .connection-mark {
   display: inline-flex;
   align-items: center;
@@ -305,6 +331,24 @@ button.presence-person:hover .avatar {
 .interrupt-button:hover {
   border-color: var(--danger);
   background: #34191e;
+}
+
+.share-button {
+  min-height: 34px;
+  padding: 0 13px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-control);
+  background: var(--surface-strong);
+  color: var(--text-soft);
+  font-size: 11px;
+  font-weight: 760;
+  transition: background 150ms ease, border-color 150ms ease, color 150ms ease;
+}
+
+.share-button:hover {
+  border-color: rgb(123 196 178 / 55%);
+  background: #17211f;
+  color: var(--accent-strong);
 }
 
 .session-qr-wrap {
@@ -520,6 +564,36 @@ button.presence-person:hover .avatar {
 .event-main {
   min-width: 0;
   padding: 1px 0 13px;
+}
+
+.event-main--agent {
+  margin: 0 0 7px;
+  padding: 1px 0 9px 9px;
+  border-left: 2px solid var(--agent-color, var(--accent));
+}
+
+.agent-chip {
+  min-height: 19px;
+  display: inline-flex;
+  align-items: center;
+  margin: 0 0 5px;
+  padding: 0 6px;
+  border: 1px solid color-mix(in srgb, var(--agent-color, var(--accent)) 50%, var(--line));
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--agent-color, var(--accent)) 9%, var(--surface));
+  color: color-mix(in srgb, var(--agent-color, var(--accent)) 84%, var(--text));
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 760;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.agent-chip--compact {
+  min-height: 17px;
+  margin: 0;
+  padding-inline: 5px;
+  font-size: 8px;
 }
 
 .event-meta {
@@ -1186,10 +1260,29 @@ button.presence-person:hover .avatar {
 .preview-empty__frame {
   width: 48px;
   height: 34px;
+  display: grid;
+  align-items: end;
+  padding: 4px;
+  overflow: hidden;
   margin-bottom: 11px;
   border: 1px solid var(--line-strong);
   border-radius: 4px;
   box-shadow: inset 0 7px 0 var(--surface-strong);
+}
+
+.preview-empty__frame i {
+  width: 72%;
+  height: 2px;
+  display: block;
+  border-radius: 2px;
+  background: var(--accent);
+  transform-origin: left;
+  animation: provision-scan 1.5s cubic-bezier(0.16, 1, 0.3, 1) infinite alternate;
+}
+
+.preview-empty--error .preview-empty__frame {
+  border-color: rgb(227 111 117 / 45%);
+  box-shadow: inset 0 7px 0 var(--danger-surface);
 }
 
 .control-deck {
@@ -1198,6 +1291,10 @@ button.presence-person:hover .avatar {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   overflow: hidden;
+}
+
+.control-deck--viewer {
+  grid-template-rows: minmax(0, 1fr);
 }
 
 .steer-composer {
@@ -1223,6 +1320,54 @@ button.presence-person:hover .avatar {
   color: var(--faint);
   font-family: var(--mono);
   font-size: 10px;
+}
+
+.composer-target {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 7px;
+}
+
+.composer-target > span {
+  flex: 0 0 auto;
+  color: var(--faint);
+  font-family: var(--mono);
+  font-size: 9px;
+}
+
+.composer-target__chips {
+  min-width: 0;
+  display: flex;
+  gap: 5px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.composer-target__chips::-webkit-scrollbar {
+  display: none;
+}
+
+.composer-target button {
+  min-height: 25px;
+  flex: 0 0 auto;
+  padding: 0 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 710;
+  transition: border-color 150ms ease, background 150ms ease, color 150ms ease;
+}
+
+.composer-target button:hover,
+.composer-target button.is-selected {
+  border-color: color-mix(in srgb, var(--agent-color, var(--accent)) 62%, var(--line));
+  background: color-mix(in srgb, var(--agent-color, var(--accent)) 11%, var(--surface));
+  color: color-mix(in srgb, var(--agent-color, var(--accent)) 82%, var(--text));
 }
 
 .composer-input-row {
@@ -1351,6 +1496,13 @@ button.presence-person:hover .avatar {
   margin-bottom: 5px;
 }
 
+.task-status-wrap {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
 .task-item code,
 .gate-card code {
   min-width: 0;
@@ -1422,6 +1574,10 @@ button.presence-person:hover .avatar {
 }
 
 .mobile-composer-wrap {
+  display: none;
+}
+
+.mobile-viewer-controls {
   display: none;
 }
 
@@ -1659,6 +1815,53 @@ button.presence-person:hover .avatar {
   display: none;
 }
 
+.not-found-page {
+  width: 100%;
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background:
+    radial-gradient(circle at 35% 35%, rgb(123 196 178 / 7%), transparent 26rem),
+    var(--bg);
+}
+
+.not-found-page > div {
+  width: min(440px, 100%);
+  padding: 28px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-panel);
+  background: var(--surface);
+  animation: dialog-enter 360ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.not-found-page h1 {
+  margin: 28px 0 0;
+  color: var(--text);
+  font-size: clamp(28px, 7vw, 42px);
+  line-height: 1;
+  letter-spacing: -0.045em;
+}
+
+.not-found-page p {
+  margin: 12px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.not-found-page button {
+  min-height: 44px;
+  margin-top: 20px;
+  padding: 0 15px;
+  border: 1px solid var(--accent-strong);
+  border-radius: var(--radius-control);
+  background: var(--accent-strong);
+  color: var(--accent-ink);
+  font-size: 11px;
+  font-weight: 780;
+}
+
 @keyframes event-arrive {
   from { opacity: 0; transform: translateY(8px); }
   to { opacity: 1; transform: translateY(0); }
@@ -1677,6 +1880,11 @@ button.presence-person:hover .avatar {
 @keyframes dialog-enter {
   from { opacity: 0; transform: translateY(14px) scale(0.985); }
   to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes provision-scan {
+  from { opacity: 0.46; transform: scaleX(0.24); }
+  to { opacity: 1; transform: scaleX(1); }
 }
 
 @keyframes sheet-enter {
@@ -1756,6 +1964,11 @@ button.presence-person:hover .avatar {
     display: none;
   }
 
+  .viewer-badge {
+    padding-inline: 5px;
+    font-size: 9px;
+  }
+
   .topbar__actions {
     grid-column: 2;
     grid-row: 1 / span 2;
@@ -1764,6 +1977,12 @@ button.presence-person:hover .avatar {
   .interrupt-button {
     min-height: 44px;
     padding-inline: 9px;
+    font-size: 10px;
+  }
+
+  .share-button {
+    min-height: 44px;
+    padding-inline: 11px;
     font-size: 10px;
   }
 
@@ -1825,6 +2044,10 @@ button.presence-person:hover .avatar {
 
   .event-main {
     padding-bottom: 10px;
+  }
+
+  .event-main--agent {
+    padding: 1px 0 8px 7px;
   }
 
   .compact-event {
@@ -1917,6 +2140,14 @@ button.presence-person:hover .avatar {
     margin-bottom: 5px;
   }
 
+  .steer-composer--mobile .composer-target {
+    margin-bottom: 6px;
+  }
+
+  .steer-composer--mobile .composer-target button {
+    min-height: 32px;
+  }
+
   .steer-composer--mobile textarea {
     min-height: 44px;
     max-height: 72px;
@@ -1943,6 +2174,41 @@ button.presence-person:hover .avatar {
   }
 
   .mobile-panel-actions b {
+    margin-left: 4px;
+    color: var(--text-soft);
+    font-family: var(--mono);
+  }
+
+  .mobile-viewer-controls {
+    min-height: 54px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 10px;
+    border-top: 1px solid var(--line-strong);
+    background: var(--surface-raised);
+  }
+
+  .mobile-viewer-controls > span {
+    margin-right: auto;
+    color: var(--warning);
+    font-family: var(--mono);
+    font-size: 9px;
+    font-weight: 760;
+    text-transform: uppercase;
+  }
+
+  .mobile-viewer-controls button {
+    min-height: 44px;
+    padding: 0 10px;
+    border: 1px solid var(--line-strong);
+    border-radius: var(--radius-control);
+    background: var(--surface-strong);
+    color: var(--muted);
+    font-size: 10px;
+  }
+
+  .mobile-viewer-controls b {
     margin-left: 4px;
     color: var(--text-soft);
     font-family: var(--mono);

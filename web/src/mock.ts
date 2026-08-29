@@ -1,4 +1,4 @@
-import type { Actor, EventPayloads, EventType } from "./types";
+import type { Actor, AgentSpec, EventPayloads, EventType, RoomRecord } from "./types";
 
 export interface MockBeat<K extends EventType = EventType> {
   at: number;
@@ -12,12 +12,57 @@ export const MOCK_DURATION_MS = 90_000;
 
 const ARJUN: Actor = { id: "act_arjun", name: "Arjun Mehta", kind: "human" };
 const PRIYA: Actor = { id: "act_priya", name: "Priya Okafor", kind: "human" };
-export const MOCK_CODEX: Actor = { id: "act_codex", name: "Codex", kind: "agent" };
+export const MOCK_TURBO: Actor = { id: "agent_turbo", name: "Codex Turbo", kind: "agent" };
+export const MOCK_DEEP: Actor = { id: "agent_deep", name: "Codex Deep", kind: "agent" };
+export const MOCK_CODEX = MOCK_TURBO;
 export const MOCK_SYSTEM: Actor = { id: "act_ensemble", name: "Ensemble", kind: "system" };
+
+export const MOCK_AGENTS: AgentSpec[] = [
+  {
+    agentId: "turbo",
+    label: "Codex Turbo",
+    engine: "runner",
+    model: "gpt-5.3-codex-spark",
+    color: "#7bc4b2",
+  },
+  {
+    agentId: "deep",
+    label: "Codex Deep",
+    engine: "runner",
+    model: "gpt-5.5",
+    color: "#8c83a6",
+  },
+];
+
+export function createMockRoom(): RoomRecord {
+  const roomId = "mock-room";
+  const origin = typeof window === "undefined" ? "http://localhost:5173" : window.location.origin;
+  return {
+    roomId,
+    name: "Roomboard launch",
+    goal: "Turn a shared wall into a polished, collaborative room for ideas.",
+    createdAt: Date.now() - 90_000,
+    agents: MOCK_AGENTS.map((agent) => ({ ...agent })),
+    invites: { steer: "mock-steer", view: "mock-view" },
+    links: {
+      steer: `${origin}/s/${roomId}?k=mock-steer&mock=1`,
+      view: `${origin}/s/${roomId}?k=mock-view&mock=1`,
+    },
+    workspace: { status: "provisioning" },
+  };
+}
 
 export function createMockActors(name: string) {
   const current: Actor = { id: "act_mara", name, kind: "human" };
-  return { current, arjun: ARJUN, priya: PRIYA, codex: MOCK_CODEX, system: MOCK_SYSTEM };
+  return {
+    current,
+    arjun: ARJUN,
+    priya: PRIYA,
+    codex: MOCK_CODEX,
+    turbo: MOCK_TURBO,
+    deep: MOCK_DEEP,
+    system: MOCK_SYSTEM,
+  };
 }
 
 function previewDocument(
@@ -56,14 +101,28 @@ export function mockPreviewUrl(
   return `data:text/html;charset=utf-8,${encodeURIComponent(previewDocument(stage, includeVotes))}`;
 }
 
-export function createMockBeats(name: string): MockBeat[] {
-  const { current, arjun, priya, codex, system } = createMockActors(name);
+function mockAgentIdForBeat(beat: MockBeat): "turbo" | "deep" {
+  const payload = beat.payload as { agentId?: string; taskId?: string; viaTaskId?: string };
+  if (payload.agentId === "deep" || payload.agentId === "turbo") return payload.agentId;
+  const taskId = payload.taskId ?? payload.viaTaskId ?? "";
+  if (taskId === "task_votes" || taskId === "task_pulse") return "deep";
+  if (/votes|vote_fix|pulse|registered_deep/.test(beat.id)) return "deep";
+  return "turbo";
+}
 
-  return [
+export function createMockBeats(name: string): MockBeat[] {
+  const { current, arjun, priya, codex, turbo, deep, system } = createMockActors(name);
+
+  const beats: MockBeat[] = [
+    { at: 20, id: "mock_room_created", actor: system, type: "room.created", payload: { name: "Roomboard launch", goal: "Turn a shared wall into a polished, collaborative room for ideas." } },
+    { at: 40, id: "mock_workspace_provisioning", actor: system, type: "workspace.status", payload: { status: "provisioning", detail: "Preparing the Roomboard workspace" } },
+    { at: 60, id: "mock_registered_turbo", actor: system, type: "agent.registered", payload: { agentId: "turbo", label: "Codex Turbo", model: "gpt-5.3-codex-spark" } },
+    { at: 80, id: "mock_registered_deep", actor: system, type: "agent.registered", payload: { agentId: "deep", label: "Codex Deep", model: "gpt-5.5" } },
     { at: 120, id: "mock_join_current", actor: current, type: "actor.joined", payload: { name: current.name, kind: "human" } },
     { at: 650, id: "mock_driver_current", actor: system, type: "driver.changed", payload: { toActorId: current.id } },
     { at: 2_100, id: "mock_join_arjun", actor: arjun, type: "actor.joined", payload: { name: arjun.name, kind: "human" } },
     { at: 4_100, id: "mock_join_priya", actor: priya, type: "actor.joined", payload: { name: priya.name, kind: "human" } },
+    { at: 5_000, id: "mock_workspace_ready", actor: system, type: "workspace.status", payload: { status: "ready", detail: "Workspace and preview tunnel are live" } },
     { at: 5_400, id: "mock_preview_seed", actor: system, type: "preview.updated", payload: { url: mockPreviewUrl("seed") } },
     { at: 6_800, id: "mock_post_notes", actor: current, type: "crew.actor_post", payload: { text: "Add three tactile sticky notes with ideas from the room." } },
     { at: 7_650, id: "mock_dispatch_notes", actor: system, type: "crew.task_dispatched", payload: { taskId: "task_notes", text: "Add three tactile sticky notes with ideas from the room.", byActorId: current.id } },
@@ -122,4 +181,22 @@ export function createMockBeats(name: string): MockBeat[] {
     { at: 89_400, id: "mock_ledger_final", actor: system, type: "ledger.updated", payload: { rows: [{ actorId: current.id, name: current.name, steers: 1, tokens: 3_842, costUsd: 0.011526, outcomes: ["Three responsive sticky notes are live."] }, { actorId: arjun.id, name: arjun.name, steers: 1, tokens: 2_816, costUsd: 0.008448, outcomes: ["Quick upvotes are active on every note."] }, { actorId: priya.id, name: priya.name, steers: 2, tokens: 3_527, costUsd: 0.010581, outcomes: ["Dark Roomboard and vote confetti are live."] }] } },
     { at: 90_000, id: "mock_arjun_left", actor: arjun, type: "actor.left", payload: {} },
   ];
+
+  return beats.map((beat) => {
+    const agentId = mockAgentIdForBeat(beat);
+    const actor = beat.actor.kind === "agent" ? (agentId === "deep" ? deep : turbo) : beat.actor;
+    const carriesAgentId =
+      beat.type.startsWith("agent.") ||
+      beat.type === "crew.task_dispatched" ||
+      (beat.type === "preview.updated" && beat.id !== "mock_preview_seed");
+
+    if (!carriesAgentId && actor === beat.actor) return beat;
+    return {
+      ...beat,
+      actor,
+      payload: carriesAgentId
+        ? { ...(beat.payload as Record<string, unknown>), agentId }
+        : beat.payload,
+    } as MockBeat;
+  });
 }

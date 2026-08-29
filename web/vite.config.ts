@@ -5,6 +5,9 @@ export default defineConfig({
   plugins: [react()],
   server: {
     proxy: {
+      "/rooms": {
+        target: "http://localhost:8080",
+      },
       "/ws": {
         target: "http://localhost:8080",
         ws: true,

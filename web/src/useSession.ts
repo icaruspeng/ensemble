@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { createMockActors, createMockBeats, mockPreviewUrl, MOCK_CODEX } from "./mock";
+import {
+  createMockActors,
+  createMockBeats,
+  createMockRoom,
+  mockPreviewUrl,
+  MOCK_DEEP,
+  MOCK_TURBO,
+} from "./mock";
 import type {
   Actor,
   ClientMessage,
@@ -8,6 +15,8 @@ import type {
   EventPayloads,
   EventType,
   LedgerRow,
+  RoomRecord,
+  SessionRole,
 } from "./types";
 
 interface WelcomeFrame {
@@ -15,6 +24,8 @@ interface WelcomeFrame {
   actorId: string;
   driverActorId: string | null;
   events: EnsembleEvent[];
+  room?: RoomRecord;
+  role?: SessionRole;
 }
 
 interface EventFrame {
@@ -54,12 +65,69 @@ function websocketUrl() {
   return `${protocol}//${window.location.host}/ws`;
 }
 
-export function useSession(name: string, mockMode: boolean) {
+function applyRoomEvent(room: RoomRecord | null, event: EnsembleEvent) {
+  if (!room) return room;
+  if (event.type === "room.created") {
+    const payload = event.payload as EventPayloads["room.created"];
+    return { ...room, name: payload.name, goal: payload.goal };
+  }
+  if (event.type === "workspace.status") {
+    const payload = event.payload as EventPayloads["workspace.status"];
+    return { ...room, workspace: { ...room.workspace, status: payload.status, detail: payload.detail } };
+  }
+  if (event.type === "preview.updated") {
+    const payload = event.payload as EventPayloads["preview.updated"];
+    return { ...room, workspace: { ...room.workspace, previewUrl: payload.url } };
+  }
+  if (event.type === "agent.registered") {
+    const payload = event.payload as EventPayloads["agent.registered"];
+    return {
+      ...room,
+      agents: room.agents.map((agent) =>
+        agent.agentId === payload.agentId
+          ? { ...agent, label: payload.label, model: payload.model }
+          : agent,
+      ),
+    };
+  }
+  return room;
+}
+
+export interface UseSessionOptions {
+  name: string;
+  roomId: string;
+  key: string;
+  mockMode: boolean;
+}
+
+export interface SessionState {
+  events: EnsembleEvent[];
+  actorId: string | null;
+  driverActorId: string | null;
+  status: ConnectionStatus;
+  transportMessage: string;
+  room: RoomRecord | null;
+  role: SessionRole | null;
+  send: (message: ClientMessage) => boolean;
+}
+
+export function useSession(options: UseSessionOptions): SessionState;
+export function useSession(name: string, mockMode: boolean): SessionState;
+export function useSession(
+  optionsOrName: UseSessionOptions | string,
+  legacyMockMode = false,
+): SessionState {
+  const options = typeof optionsOrName === "string"
+    ? { name: optionsOrName, roomId: "demo", key: "", mockMode: legacyMockMode }
+    : optionsOrName;
+  const { name, roomId, key, mockMode } = options;
   const [events, setEvents] = useState<EnsembleEvent[]>([]);
   const [actorId, setActorId] = useState<string | null>(null);
   const [driverActorId, setDriverActorId] = useState<string | null>(null);
   const [status, setStatus] = useState<ConnectionStatus>(name ? "connecting" : "idle");
   const [transportMessage, setTransportMessage] = useState("");
+  const [room, setRoom] = useState<RoomRecord | null>(null);
+  const [role, setRole] = useState<SessionRole | null>(null);
 
   const eventsRef = useRef<EnsembleEvent[]>([]);
   const driverRef = useRef<string | null>(null);
@@ -85,6 +153,8 @@ export function useSession(name: string, mockMode: boolean) {
     setActorId(null);
     setDriverActorId(null);
     setTransportMessage("");
+    setRoom(null);
+    setRole(null);
     sendRef.current = () => false;
 
     if (!name) {
@@ -100,8 +170,11 @@ export function useSession(name: string, mockMode: boolean) {
       let storyPausedUntil = 0;
       let latestScriptLedgerRows: LedgerRow[] = [];
       const cancelledTasks = new Set<string>();
+      const gateAgents = new Map<string, string>();
       const timers = new Set<number>();
       const { current, arjun, priya, system } = createMockActors(name);
+      const mockRoom = createMockRoom();
+      const mockRole: SessionRole = key === mockRoom.invites?.view ? "viewer" : "steerer";
       const canonicalHumans = [current, arjun, priya];
       const startedAt = Date.now();
 
@@ -117,6 +190,7 @@ export function useSession(name: string, mockMode: boolean) {
         if (type === "driver.changed") {
           updateDriver((payload as EventPayloads["driver.changed"]).toActorId);
         }
+        setRoom((currentRoom) => applyRoomEvent(currentRoom, event));
         replaceEvents((currentEvents) => mergeEvents(currentEvents, [event]));
       };
 
@@ -169,7 +243,9 @@ export function useSession(name: string, mockMode: boolean) {
       };
 
       setActorId(current.id);
-      updateDriver(current.id);
+      updateDriver(mockRole === "viewer" ? arjun.id : current.id);
+      setRoom(mockRoom);
+      setRole(mockRole);
       setStatus("live");
       setTransportMessage("Mock session running on local time");
       later(2_200, () => setTransportMessage(""));
@@ -182,6 +258,16 @@ export function useSession(name: string, mockMode: boolean) {
           }
           const storyTaskId = storyTaskForBeat(beat);
           if (storyTaskId && cancelledTasks.has(storyTaskId)) return;
+          if (mockRole === "viewer" && beat.id === "mock_driver_current") {
+            emit(
+              "driver.changed",
+              beat.actor,
+              { toActorId: arjun.id },
+              beat.id,
+              Math.max(startedAt + beat.at, Date.now()),
+            );
+            return;
+          }
           if (beat.type === "crew.gate_resolved") {
             const incoming = beat.payload as EventPayloads["crew.gate_resolved"];
             const alreadyResolved = eventsRef.current.some(
@@ -235,7 +321,10 @@ export function useSession(name: string, mockMode: boolean) {
             emit(
               "preview.updated",
               beat.actor,
-              { url: mockPreviewUrl("complete", false) },
+              {
+                url: mockPreviewUrl("complete", false),
+                agentId: (beat.payload as EventPayloads["preview.updated"]).agentId,
+              },
               beat.id,
               Math.max(startedAt + beat.at, Date.now()),
             );
@@ -249,12 +338,15 @@ export function useSession(name: string, mockMode: boolean) {
       }
 
       sendRef.current = (message) => {
-        if (!active) return false;
+        if (!active || mockRole === "viewer") return false;
         setTransportMessage("");
 
         if (message.type === "steer") {
           const text = message.text.trim();
           if (!text) return false;
+          const agentId = mockRoom.agents.some((agent) => agent.agentId === message.agentId)
+            ? message.agentId
+            : mockRoom.agents[0]?.agentId;
           const requestNumber = ++localId;
           const taskId = `task_local_${requestNumber}`;
           const gateId = `gate_local_${requestNumber}`;
@@ -263,11 +355,12 @@ export function useSession(name: string, mockMode: boolean) {
           publishLocalLedger();
           if (driverRef.current === current.id) {
             later(280, () =>
-              emit("crew.task_dispatched", { id: "act_ensemble", name: "Ensemble", kind: "system" }, { taskId, text, byActorId: current.id }),
+              emit("crew.task_dispatched", system, { taskId, text, byActorId: current.id, agentId }),
             );
           } else {
+            if (agentId) gateAgents.set(gateId, agentId);
             later(280, () =>
-              emit("crew.gate_requested", { id: "act_ensemble", name: "Ensemble", kind: "system" }, { gateId, question: `${current.name} wants: ${text} Dispatch?`, taskId }),
+              emit("crew.gate_requested", system, { gateId, question: `${current.name} wants: ${text} Dispatch?`, taskId }),
             );
           }
           return true;
@@ -303,6 +396,7 @@ export function useSession(name: string, mockMode: boolean) {
           });
           if (!message.approved && request) {
             cancelledTasks.add((request.payload as EventPayloads["crew.gate_requested"]).taskId);
+            gateAgents.delete(message.gateId);
           }
           if (message.approved && request) {
             const gate = request.payload as EventPayloads["crew.gate_requested"];
@@ -311,8 +405,10 @@ export function useSession(name: string, mockMode: boolean) {
               .reverse()
               .map((event) => event.actor)
               .find((actor) => actor.kind === "human" && gate.question.startsWith(`${actor.name} wants:`));
+            const agentId = gateAgents.get(message.gateId) ?? mockRoom.agents[0]?.agentId;
+            gateAgents.delete(message.gateId);
             later(320, () =>
-              emit("crew.task_dispatched", { id: "act_ensemble", name: "Ensemble", kind: "system" }, { taskId: gate.taskId, text, byActorId: originalAuthor?.id ?? current.id }),
+              emit("crew.task_dispatched", system, { taskId: gate.taskId, text, byActorId: originalAuthor?.id ?? current.id, agentId }),
             );
           }
           return true;
@@ -343,10 +439,15 @@ export function useSession(name: string, mockMode: boolean) {
           );
           if (!dispatch) return false;
           const task = dispatch.payload as EventPayloads["crew.task_dispatched"];
+          const interruptedAgentId = task.agentId ?? mockRoom.agents[0]?.agentId ?? "turbo";
+          const interruptedAgent = interruptedAgentId === "deep" ? MOCK_DEEP : MOCK_TURBO;
           storyPausedUntil = Math.max(storyPausedUntil, Date.now() + 1_400);
-          emit("agent.message", MOCK_CODEX, { text: "Turn interrupted. The active task is back in the queue and will resume shortly." });
+          emit("agent.message", interruptedAgent, {
+            text: "Turn interrupted. The active task is back in the queue and will resume shortly.",
+            agentId: interruptedAgentId,
+          });
           emit("crew.task_dispatched", system, task);
-          later(1_200, () => emit("agent.turn_started", MOCK_CODEX, { taskId: activeTaskId }));
+          later(1_200, () => emit("agent.turn_started", interruptedAgent, { taskId: activeTaskId, agentId: interruptedAgentId }));
           return true;
         }
 
@@ -379,7 +480,7 @@ export function useSession(name: string, mockMode: boolean) {
 
       ws.addEventListener("open", () => {
         if (disposed || socket !== ws) return;
-        ws.send(JSON.stringify({ type: "join", name }));
+        ws.send(JSON.stringify({ type: "join", roomId, name, key }));
       });
 
       ws.addEventListener("message", (messageEvent) => {
@@ -406,7 +507,13 @@ export function useSession(name: string, mockMode: boolean) {
             }
             return mergeEvents(currentEvents, replay);
           });
+          const replayedRoom = replay.reduce<RoomRecord | null>(
+            (currentRoom, event) => applyRoomEvent(currentRoom, event),
+            frame.room ?? null,
+          );
           setActorId(frame.actorId);
+          setRoom(replayedRoom);
+          setRole(frame.role ?? "steerer");
           driverAuthoritySeq = replayHighSequence;
           updateDriver(frame.driverActorId ?? null);
           welcomed = true;
@@ -426,6 +533,7 @@ export function useSession(name: string, mockMode: boolean) {
             driverAuthoritySeq = frame.event.seq;
             updateDriver((frame.event.payload as EventPayloads["driver.changed"]).toActorId);
           }
+          setRoom((currentRoom) => applyRoomEvent(currentRoom, frame.event));
           replaceEvents((currentEvents) => mergeEvents(currentEvents, [frame.event]));
         }
       });
@@ -462,7 +570,7 @@ export function useSession(name: string, mockMode: boolean) {
       if (socket) socket.close();
       sendRef.current = () => false;
     };
-  }, [mockMode, name, replaceEvents, updateDriver]);
+  }, [key, mockMode, name, replaceEvents, roomId, updateDriver]);
 
   const send = useCallback((message: ClientMessage) => sendRef.current(message), []);
 
@@ -472,6 +580,8 @@ export function useSession(name: string, mockMode: boolean) {
     driverActorId,
     status,
     transportMessage,
+    room,
+    role,
     send,
   };
 }
