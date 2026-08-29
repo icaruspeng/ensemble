@@ -106,6 +106,7 @@ case "$last" in
     printf '%s\n' '{"type":"item.completed","item":{"id":"reason-1","type":"reasoning","summary":[{"text":"Planning carefully"}]}}'
     printf '%s\n' '{"type":"item.started","item":{"id":"command-1","type":"command_execution","command":"npm run build","exit_code":null,"status":"in_progress"}}'
     printf '%s\n' '{"type":"item.completed","item":{"id":"command-1","type":"command_execution","command":"npm run build","exit_code":0,"status":"completed"}}'
+    printf '%s\n' '{"type":"item.completed","item":{"id":"command-1b","type":"command_execution","command":"false-step","exit_code":1,"status":"failed"}}'
     printf '%s\n' '{"type":"item.completed","item":{"id":"diff-1","type":"file_change","changes":[{"path":"src/App.jsx","kind":"update","diff":"--- a/src/App.jsx\n+++ b/src/App.jsx"}],"status":"completed"}}'
     printf '%s' '{"type":"item.completed","item":{"id":"reason-2","type":"reasoning",'
     /bin/sleep 0.05
@@ -125,6 +126,7 @@ case "$last" in
   *"Keep running until interrupted"*)
     printf '%s\n' '{"type":"thread.started","thread_id":"thread_recorded_123"}'
     printf '%s\n' '{"type":"item.started","item":{"id":"command-3","type":"command_execution","command":"long-running fake command","status":"in_progress"}}'
+    printf '%s\n' '{"type":"item.completed","item":{"id":"reasoning-3","type":"reasoning","text":"mid-run marker before hang"}}'
     trap '' HUP INT TERM
     exec /bin/sleep 30
     ;;
@@ -290,8 +292,8 @@ esac
         .flat()
         .some(
           (event) =>
-            event.type === "agent.command" &&
-            event.payload.command === "long-running fake command",
+            event.type === "agent.thought" &&
+            event.payload.text === "mid-run marker before hang",
         ),
     );
 
@@ -403,12 +405,22 @@ esac
       "item.started must announce a command before it exits",
     );
     assert(
-      events.some(
+      !events.some(
         (event) =>
           event.type === "agent.command" &&
           event.payload.command === "npm run build" &&
           event.payload.exitCode === 0,
       ),
+      "successful completion of an announced command must not re-emit",
+    );
+    assert(
+      events.some(
+        (event) =>
+          event.type === "agent.command" &&
+          event.payload.command === "false-step" &&
+          event.payload.exitCode === 1,
+      ),
+      "failed commands must surface with their exit code",
     );
     assert(
       events.some(

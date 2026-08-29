@@ -319,10 +319,18 @@ function mapItem(run, item, stage = "completed") {
     const wasAnnounced = run.announcedCommands.has(lifecycleKey);
 
     if (!completed) {
+      if (!wasAnnounced) {
+        run.announcedCommands.add(lifecycleKey);
+        eventBuffer.add("agent.command", { command: commandFrom(item) });
+      }
       return;
     }
 
-    if (!wasAnnounced || (exitCode !== undefined && exitCode !== null)) {
+    // Announced commands only re-emit on failure; a successful completion
+    // echoing an identical line is timeline noise on the projector.
+    const failedExit =
+      exitCode !== undefined && exitCode !== null && Number(exitCode) !== 0;
+    if (!wasAnnounced || failedExit) {
       const payload = { command: commandFrom(item) };
       if (exitCode !== undefined && exitCode !== null) {
         payload.exitCode = Number.isFinite(Number(exitCode))
