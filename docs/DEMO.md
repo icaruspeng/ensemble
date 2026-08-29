@@ -52,3 +52,8 @@ Point at the ledger strip: "And every outcome is attributed: who steered, what i
 2. "Make it confetti when a note is added."
 3. "Add dark mode with a toggle in the header."
 4. "Add a vote button on each note with a count."
+
+## Import-demo asset (created 12:15 PM day-of)
+- Repo: https://github.com/icaruspeng/trailmap (public) — "Trailmap", hiking checklist built in a genuine solo Codex session
+- Codex session/thread id to paste in the import flow: `01a04f0e-69a9-76c0-ad84-12c73977e520`
+- Beat: create task "Trailmap, together" → import repo + thread id → first steer: "add a weather row for the trailhead" → agent continues WITH MEMORY of its solo build.
