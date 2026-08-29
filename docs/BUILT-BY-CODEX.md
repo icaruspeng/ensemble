@@ -12,6 +12,15 @@ Three parallel non-interactive Codex sessions, each owning one component against
 | web/ (React mission-control client) | `01a04ed3-01a1-7ef0-b0c4-e8e2b9b50b13` |
 | runner/ + target-app/ (agent harness + seed app) | `01a04ed3-2089-71a1-a90d-395bf484959f` |
 
+V2 (rooms, invites, provisioning, import, multi-agent) was a second parallel wave:
+
+| Component | Codex session (thread_id) |
+|---|---|
+| server/ V2 (+provision.mjs, reflex-agent.mjs) | `01a04f2a-27d5-7fe2-89cf-51dd7f0e8712` |
+| web/ V2 (home, share links, roles, agent lanes) | `01a04f03-0d77-70a0-9674-92f585997f39` |
+| runner/ V2 (per-agent threads, import) | `01a04f03-2914-79e2-8755-14fa148c5e2a` |
+| Trailmap (the import-demo solo session) | `01a04f0e-69a9-76c0-ad84-12c73977e520` |
+
 Invocation pattern: `codex exec --json --sandbox workspace-write -c sandbox_workspace_write.network_access=true` — full event streams archived in the build logs. (Earlier validation spike session: `01a04ec9-5ac6-77f1-999a-020eb0762ad2`.)
 
 ## Run-time: Codex is the multiplayer session's agent
