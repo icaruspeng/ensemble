@@ -5,6 +5,66 @@ import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 
 const RUNNER_DIR = dirname(fileURLToPath(import.meta.url));
+
+function requiredEnvironmentValue(name) {
+  const value = process.env[name]?.trim();
+  if (!value) {
+    throw new Error(`[runner] ${name} must be a nonempty string`);
+  }
+  return value;
+}
+
+function parseAgents(value) {
+  let agents;
+  try {
+    agents = JSON.parse(value);
+  } catch (error) {
+    throw new Error(`[runner] AGENTS must be valid JSON: ${error.message}`);
+  }
+
+  if (!Array.isArray(agents) || agents.length === 0) {
+    throw new Error("[runner] AGENTS must be a nonempty JSON array");
+  }
+
+  const seenAgentIds = new Set();
+  return agents.map((agent, index) => {
+    if (!agent || typeof agent !== "object" || Array.isArray(agent)) {
+      throw new Error(`[runner] AGENTS[${index}] must be an object`);
+    }
+
+    const agentId =
+      typeof agent.agentId === "string" ? agent.agentId.trim() : "";
+    const model = typeof agent.model === "string" ? agent.model.trim() : "";
+    if (!agentId || !model) {
+      throw new Error(
+        `[runner] AGENTS[${index}] must have nonempty agentId and model strings`,
+      );
+    }
+    if (agent.engine !== undefined && agent.engine !== "runner") {
+      throw new Error(`[runner] AGENTS[${index}].engine must be "runner"`);
+    }
+    if (seenAgentIds.has(agentId)) {
+      throw new Error(`[runner] duplicate agentId in AGENTS: ${agentId}`);
+    }
+    seenAgentIds.add(agentId);
+
+    return { ...agent, agentId, model };
+  });
+}
+
+function parseInterruptPort(value) {
+  const text = String(value).trim();
+  if (!/^\d+$/.test(text)) {
+    throw new Error("[runner] INTERRUPT_PORT must be an integer from 0 to 65535");
+  }
+
+  const port = Number(text);
+  if (!Number.isSafeInteger(port) || port < 0 || port > 65_535) {
+    throw new Error("[runner] INTERRUPT_PORT must be an integer from 0 to 65535");
+  }
+  return port;
+}
+
 const SERVER_URL = (process.env.SERVER_URL ?? "http://127.0.0.1:8080").replace(
   /\/+$/,
   "",
@@ -12,10 +72,17 @@ const SERVER_URL = (process.env.SERVER_URL ?? "http://127.0.0.1:8080").replace(
 const ENSEMBLE_KEY = process.env.ENSEMBLE_KEY ?? "";
 const TARGET_DIR = process.env.TARGET_DIR ?? resolve(RUNNER_DIR, "../target-app");
 const CODEX_BIN = process.env.CODEX_BIN ?? "codex";
-const INTERRUPT_PORT = 8091;
+const ROOM_ID = requiredEnvironmentValue("ROOM_ID");
+const AGENTS = parseAgents(requiredEnvironmentValue("AGENTS"));
+const AGENTS_BY_ID = new Map(AGENTS.map((agent) => [agent.agentId, agent]));
+const IMPORT_THREAD_ID = process.env.IMPORT_THREAD_ID?.trim() || undefined;
+const INTERRUPT_PORT = parseInterruptPort(process.env.INTERRUPT_PORT ?? "8091");
+const ENCODED_ROOM_ID = encodeURIComponent(ROOM_ID);
+const NEXT_TASK_PATH = `/runner/next-task?roomId=${ENCODED_ROOM_ID}`;
+const EVENTS_PATH = `/runner/events?roomId=${ENCODED_ROOM_ID}`;
+const INTERRUPTED_PATH = `/runner/interrupted?roomId=${ENCODED_ROOM_ID}`;
 const POLL_INTERVAL_MS = 1_000;
 const EVENT_BUFFER_MS = 500;
-const MODEL = "gpt-5.3-codex-spark";
 const COMPLETED_ITEM_TYPES = new Set([
   "agent_message",
   "reasoning",
@@ -26,7 +93,10 @@ const COMPLETED_ITEM_TYPES = new Set([
   "patch_apply",
 ]);
 
-let threadId;
+const threadIds = new Map();
+if (IMPORT_THREAD_ID) {
+  threadIds.set(AGENTS[0].agentId, IMPORT_THREAD_ID);
+}
 let activeRun;
 let stopping = false;
 
@@ -84,8 +154,11 @@ class EventBuffer {
     }, EVENT_BUFFER_MS);
   }
 
-  add(type, payload) {
-    this.#events.push({ type, payload });
+  add(type, payload, agentId) {
+    if (!AGENTS_BY_ID.has(agentId)) {
+      throw new Error(`[runner] cannot queue event for unknown agent: ${agentId}`);
+    }
+    this.#events.push({ type, payload: { ...payload, agentId } });
   }
 
   async flush() {
@@ -102,7 +175,7 @@ class EventBuffer {
     }
 
     const batch = this.#events.splice(0, this.#events.length);
-    this.#flushPromise = postJson("/runner/events", batch);
+    this.#flushPromise = postJson(EVENTS_PATH, batch);
 
     try {
       await this.#flushPromise;
@@ -131,17 +204,22 @@ class EventBuffer {
 
 const eventBuffer = new EventBuffer();
 
+function queueRunEvent(run, type, payload) {
+  eventBuffer.add(type, payload, run.task.agentId);
+}
+
 function promptFor(task) {
   return `[Directed by ${task.authorName} in a live multiplayer session] ${task.text}. Keep changes small and immediately visible in the running app. Do not restart the dev server; it hot-reloads.`;
 }
 
-function codexArguments(prompt) {
+function codexArguments(task, prompt) {
+  const threadId = threadIds.get(task.agentId);
   if (!threadId) {
     return [
       "exec",
       "--json",
       "-m",
-      MODEL,
+      task.model,
       "--sandbox",
       "danger-full-access",
       "--skip-git-repo-check",
@@ -156,7 +234,7 @@ function codexArguments(prompt) {
     "resume",
     "--json",
     "-m",
-    MODEL,
+    task.model,
     "--skip-git-repo-check",
     threadId,
     prompt,
@@ -321,7 +399,7 @@ function mapItem(run, item, stage = "completed") {
     if (!completed) {
       if (!wasAnnounced) {
         run.announcedCommands.add(lifecycleKey);
-        eventBuffer.add("agent.command", { command: commandFrom(item) });
+        queueRunEvent(run, "agent.command", { command: commandFrom(item) });
       }
       return;
     }
@@ -337,7 +415,7 @@ function mapItem(run, item, stage = "completed") {
           ? Number(exitCode)
           : exitCode;
       }
-      eventBuffer.add("agent.command", payload);
+      queueRunEvent(run, "agent.command", payload);
     }
     run.announcedCommands.add(lifecycleKey);
     return;
@@ -346,7 +424,7 @@ function mapItem(run, item, stage = "completed") {
   if (!COMPLETED_ITEM_TYPES.has(itemType)) {
     if (!run.reportedUnknownItems.has(lifecycleKey)) {
       run.reportedUnknownItems.add(lifecycleKey);
-      eventBuffer.add("agent.thought", {
+      queueRunEvent(run, "agent.thought", {
         text: unknownItemSummary(item, itemType),
       });
     }
@@ -362,7 +440,7 @@ function mapItem(run, item, stage = "completed") {
       const text = itemText(item);
       if (text) {
         run.lastAgentMessage = text;
-        eventBuffer.add("agent.message", { text });
+        queueRunEvent(run, "agent.message", { text });
       }
       break;
     }
@@ -370,7 +448,7 @@ function mapItem(run, item, stage = "completed") {
     case "reasoning": {
       const text = itemText(item);
       if (text) {
-        eventBuffer.add("agent.thought", { text });
+        queueRunEvent(run, "agent.thought", { text });
       }
       break;
     }
@@ -385,7 +463,7 @@ function mapItem(run, item, stage = "completed") {
         if (change.file !== "unknown") {
           run.changedFiles.add(change.file);
         }
-        eventBuffer.add("agent.diff", change);
+        queueRunEvent(run, "agent.diff", change);
       }
       break;
     }
@@ -412,7 +490,7 @@ function handleCodexEvent(run, event) {
 
   if (event.type === "thread.started") {
     if (typeof event.thread_id === "string" && event.thread_id.length > 0) {
-      threadId = event.thread_id;
+      threadIds.set(run.task.agentId, event.thread_id);
     }
     return;
   }
@@ -432,9 +510,9 @@ function handleCodexEvent(run, event) {
     const costUsd = tokens * 3e-6;
     const completion = { taskId: run.task.taskId, tokens, costUsd };
 
-    eventBuffer.add("agent.turn_completed", completion);
-    eventBuffer.add("crew.task_completed", completion);
-    eventBuffer.add("crew.result_published", {
+    queueRunEvent(run, "agent.turn_completed", completion);
+    queueRunEvent(run, "crew.task_completed", completion);
+    queueRunEvent(run, "crew.result_published", {
       taskId: run.task.taskId,
       summary: firstLine(run.lastAgentMessage),
       diffStat: diffStatFor(run),
@@ -489,7 +567,7 @@ async function runTask(task) {
   activeRun = run;
 
   const prompt = promptFor(task);
-  const child = spawn(CODEX_BIN, codexArguments(prompt), {
+  const child = spawn(CODEX_BIN, codexArguments(task, prompt), {
     stdio: ["ignore", "pipe", "pipe"],
   });
   run.child = child;
@@ -529,7 +607,7 @@ async function runTask(task) {
   await linesClosed;
 
   if (!run.interrupted && !run.terminalSeen) {
-    eventBuffer.add("crew.task_failed", {
+    queueRunEvent(run, "crew.task_failed", {
       taskId: task.taskId,
       reason: taskFailureReason(run, result),
     });
@@ -542,7 +620,7 @@ async function runTask(task) {
 }
 
 async function nextTask() {
-  const response = await apiFetch("/runner/next-task");
+  const response = await apiFetch(NEXT_TASK_PATH);
   if (response.status === 204) {
     return undefined;
   }
@@ -551,15 +629,24 @@ async function nextTask() {
   }
 
   const task = await response.json();
+  const configuredAgent =
+    typeof task?.agentId === "string"
+      ? AGENTS_BY_ID.get(task.agentId)
+      : undefined;
+  const taskModel =
+    typeof task?.model === "string" ? task.model.trim() : "";
   if (
     !task ||
     typeof task.taskId !== "string" ||
     typeof task.text !== "string" ||
-    typeof task.authorName !== "string"
+    typeof task.authorName !== "string" ||
+    !configuredAgent ||
+    !taskModel ||
+    taskModel !== configuredAgent.model
   ) {
     throw new Error("/runner/next-task returned an invalid task");
   }
-  return task;
+  return { ...task, model: taskModel };
 }
 
 async function poll() {
@@ -589,7 +676,7 @@ async function reportInterrupted(run) {
   let lastError;
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
-      await postWithoutBody("/runner/interrupted");
+      await postWithoutBody(INTERRUPTED_PATH);
       run.interruptReported = true;
       return true;
     } catch (error) {
@@ -675,7 +762,10 @@ interruptServer.on("error", (error) => {
 });
 
 interruptServer.listen(INTERRUPT_PORT, "0.0.0.0", () => {
-  console.log(`[runner] interrupt endpoint listening on :${INTERRUPT_PORT}`);
+  const address = interruptServer.address();
+  const listeningPort =
+    address && typeof address === "object" ? address.port : INTERRUPT_PORT;
+  console.log(`[runner] interrupt endpoint listening on :${listeningPort}`);
   void poll();
 });
 
