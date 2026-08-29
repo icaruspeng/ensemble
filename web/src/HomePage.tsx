@@ -526,6 +526,7 @@ export function HomePage({ onNavigate }: { onNavigate: (href: string) => void })
                   {rooms.map((room) => {
                     const created = roomDate(room.createdAt);
                     const steerKey = room.roomId === "demo" ? null : storedSteerKey(room.roomId);
+                    const roomHref = `/s/${encodeURIComponent(room.roomId)}${steerKey ? `?k=${encodeURIComponent(steerKey)}` : ""}`;
                     const deleting = !!deletingRooms[room.roomId];
                     const deleteError = deleteErrors[room.roomId];
                     return (
@@ -547,6 +548,17 @@ export function HomePage({ onNavigate }: { onNavigate: (href: string) => void })
                         </span>
                         <div className="home-task-row__actions">
                           <time dateTime={created.iso}>{created.label}</time>
+                          <a
+                            className="home-task-row__open"
+                            href={roomHref}
+                            aria-label={`Open ${room.name}`}
+                            onClick={(event) => {
+                              event.preventDefault();
+                              onNavigate(roomHref);
+                            }}
+                          >
+                            open
+                          </a>
                           {steerKey && (
                             <button
                               className="home-task-row__delete"

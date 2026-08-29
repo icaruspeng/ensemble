@@ -370,8 +370,9 @@ function Header({
   return (
     <header className="topbar">
       <div className="brand-lockup">
-        <span className="brand-word">ENSEMBLE</span>
+        <a className="brand-word brand-home-link" href="/" aria-label="all tasks">ensemble</a>
         <span className="session-title">{roomName}</span>
+        <a className="all-tasks-link" href="/">all tasks</a>
         {mockMode && <span className="mode-label">Mock</span>}
         {isViewer && <span className="viewer-badge">View only</span>}
       </div>

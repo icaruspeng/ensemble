@@ -168,14 +168,42 @@ a {
   text-transform: lowercase;
 }
 
+.brand-home-link {
+  cursor: pointer;
+  opacity: 0.82;
+  text-decoration: none;
+  transition: opacity 300ms var(--ease-ensemble);
+}
+
+.brand-home-link:hover,
+.brand-home-link:focus-visible {
+  opacity: 1;
+}
+
 .brand-word::after {
   display: none;
 }
 
 .session-title {
+  display: block;
   color: var(--ink-dim);
   font-size: 13px;
   text-transform: lowercase;
+}
+
+.all-tasks-link {
+  flex: 0 0 auto;
+  color: var(--ink-dim);
+  font-size: 11px;
+  text-decoration: none;
+  text-transform: lowercase;
+  white-space: nowrap;
+  transition: color 300ms var(--ease-ensemble);
+}
+
+.all-tasks-link:hover,
+.all-tasks-link:focus-visible {
+  color: var(--ink-text);
 }
 
 .mode-label,
@@ -2160,6 +2188,26 @@ button.presence-person--driver:hover .avatar {
   gap: 9px;
 }
 
+.home-task-row__open {
+  flex: 0 0 auto;
+  color: var(--ink-dim);
+  font-family: var(--font-sans);
+  font-size: 11px;
+  line-height: 1;
+  text-decoration-line: underline;
+  text-decoration-color: var(--ink-control);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 4px;
+  text-transform: lowercase;
+  transition: color 300ms var(--ease-ensemble), text-decoration-color 300ms var(--ease-ensemble);
+}
+
+.home-task-row__open:hover,
+.home-task-row__open:focus-visible {
+  color: var(--ink-text);
+  text-decoration-color: var(--ink-hover);
+}
+
 .home-task-row__delete {
   width: 30px;
   min-width: 30px;
@@ -2661,6 +2709,10 @@ button.presence-person--driver:hover .avatar {
   .session-title {
     max-width: 17ch;
     font-size: 12px;
+  }
+
+  .all-tasks-link {
+    display: none;
   }
 
   .mode-label,
