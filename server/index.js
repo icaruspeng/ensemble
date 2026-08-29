@@ -375,6 +375,17 @@ export async function buildServer(options = {}) {
     trustProxy: true,
   });
 
+  // Browsers/clients sometimes attach stray content-types (urlencoded, plain)
+  // to bodyless DELETEs — swallow unknown types instead of failing with 415.
+  app.addContentTypeParser("*", (request, payload, done) => {
+    let raw = "";
+    payload.on("data", (chunk) => {
+      raw += chunk;
+    });
+    payload.on("end", () => done(null, raw.length > 0 ? raw : null));
+    payload.on("error", (error) => done(error, undefined));
+  });
+
   const state = { rooms: new Map(), clients: new Set(), background: new Set() };
   let closing = false;
 
