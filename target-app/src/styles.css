@@ -1,10 +1,23 @@
 :root {
-  color: #24231f;
-  background: #e8e3d7;
+  --text: #24231f;
+  --muted-text: #777267;
+  --shell-bg: #e8e3d7;
+  --board-bg: #f8f6ef;
+  --board-grid: rgb(52 50 43 / 12%);
+  --board-border: rgb(50 47 39 / 10%);
+  --board-shadow:
+    0 1px 1px rgb(56 51 40 / 5%),
+    0 18px 52px rgb(56 51 40 / 8%);
+  --brand-bg: #25251f;
+  --mark-text: #f9f6ee;
+  --footer-text: #8b8070;
+  color: var(--text);
+  background: var(--shell-bg);
   font-family:
     Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
+  color-scheme: light;
 }
 
 * {
@@ -21,6 +34,24 @@ body,
 
 body {
   min-height: 100vh;
+  background: var(--shell-bg);
+  color: var(--text);
+}
+
+body.theme-dark {
+  --text: #ecf2f7;
+  --muted-text: #a7b2bf;
+  --shell-bg: #0f1318;
+  --board-bg: #151c24;
+  --board-grid: rgb(214 225 235 / 18%);
+  --board-border: rgb(236 238 241 / 12%);
+  --board-shadow:
+    0 1px 1px rgb(11 15 21 / 40%),
+    0 18px 52px rgb(8 12 17 / 40%);
+  --brand-bg: #f0d56e;
+  --mark-text: #0c0f13;
+  --footer-text: #98a7b5;
+  color-scheme: dark;
 }
 
 .roomboard-shell {
@@ -47,8 +78,8 @@ body {
   height: 38px;
   place-items: center;
   border-radius: 12px;
-  color: #f9f6ee;
-  background: #25251f;
+  color: var(--mark-text);
+  background: var(--brand-bg);
   font-size: 0.95rem;
   font-weight: 750;
   letter-spacing: -0.04em;
@@ -68,7 +99,7 @@ body {
 
 .title-bar p {
   margin-top: 2px;
-  color: #777267;
+  color: var(--muted-text);
   font-size: 0.78rem;
   letter-spacing: 0.01em;
 }
@@ -78,22 +109,41 @@ body {
   max-width: 1480px;
   min-height: 560px;
   margin: 0 auto;
-  border: 1px solid rgb(50 47 39 / 10%);
+  border: 1px solid var(--board-border);
   border-radius: 24px;
-  background-color: #f8f6ef;
-  background-image: radial-gradient(rgb(52 50 43 / 12%) 0.8px, transparent 0.8px);
+  background-color: var(--board-bg);
+  background-image: radial-gradient(var(--board-grid) 0.8px, transparent 0.8px);
   background-size: 24px 24px;
-  box-shadow:
-    0 1px 1px rgb(56 51 40 / 5%),
-    0 18px 52px rgb(56 51 40 / 8%);
+  box-shadow: var(--board-shadow);
 }
 
 .roomboard-footer {
   max-width: 1480px;
   margin: 0 auto;
-  color: #8b8070;
+  color: var(--footer-text);
   font-size: 0.78rem;
   letter-spacing: 0.02em;
+}
+
+.title-bar {
+  justify-content: space-between;
+}
+
+.title-copy {
+  flex: 1;
+}
+
+.theme-toggle {
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid color-mix(in oklab, currentColor 24%, transparent);
+  background: transparent;
+  color: inherit;
+  border-radius: 999px;
+  width: 40px;
+  height: 40px;
+  font-size: 1.08rem;
+  cursor: pointer;
 }
 
 @media (max-width: 640px) {

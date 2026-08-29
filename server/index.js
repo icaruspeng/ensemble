@@ -36,6 +36,7 @@ const RUNNER_EVENT_TYPES = new Set([
   "crew.gate_requested",
   "crew.gate_resolved",
   "crew.result_published",
+  "preview.updated",
 ]);
 
 function newId(prefix) {
@@ -78,6 +79,11 @@ function areNonnegativeNumbers(payload, fields) {
 
 function normalizeRunnerPayload(type, payload) {
   switch (type) {
+    case "preview.updated":
+      if (!hasExactKeys(payload, ["url"]) || !areStrings(payload, ["url"])) {
+        return null;
+      }
+      return { url: payload.url };
     case "agent.turn_started":
       if (!hasExactKeys(payload, ["taskId"]) || !areStrings(payload, ["taskId"])) {
         return null;
