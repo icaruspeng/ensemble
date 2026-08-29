@@ -128,6 +128,7 @@ def main():
         f"BUNDLE_PATH=/home/user/app/workspace-bundle.tgz "
         f"PUBLIC_URL={hub_url} "
         f"DEMO_ROOM=1 DEMO_WORKSPACE_JSON=\"{demo_ws_json}\" "
+        f"DEMO_STEER_TOKEN=crew DEMO_VIEW_TOKEN=watch "
     )
     if reflex_cfg.get("apiKey"):
         env += f"REFLEX_API_KEY={reflex_cfg['apiKey']} REFLEX_ORG={reflex_cfg.get('organizationId','')} "
