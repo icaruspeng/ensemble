@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import "./home.css";
 
-type AgentId = "turbo" | "deep" | "claude";
+type AgentId = "turbo" | "deep" | "sol" | "luna" | "terra" | "claude";
 type LoadState = "loading" | "ready" | "error";
 
 interface AgentChoice {
@@ -39,6 +39,27 @@ const AGENT_CHOICES: AgentChoice[] = [
     label: "Codex Deep",
     engine: "runner",
     model: "gpt-5.5",
+  },
+  {
+    agentId: "sol",
+    shortLabel: "Sol",
+    label: "GPT-5.6 Sol",
+    engine: "runner",
+    model: "gpt-5.6-sol",
+  },
+  {
+    agentId: "luna",
+    shortLabel: "Luna",
+    label: "GPT-5.6 Luna",
+    engine: "runner",
+    model: "gpt-5.6-luna",
+  },
+  {
+    agentId: "terra",
+    shortLabel: "Terra",
+    label: "GPT-5.6 Terra",
+    engine: "runner",
+    model: "gpt-5.6-terra",
   },
   {
     agentId: "claude",

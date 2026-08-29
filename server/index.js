@@ -33,6 +33,27 @@ export const BUILTIN_AGENTS = Object.freeze({
     model: "gpt-5.5",
     color: "#a78bfa",
   }),
+  sol: Object.freeze({
+    agentId: "sol",
+    label: "GPT-5.6 Sol",
+    engine: "runner",
+    model: "gpt-5.6-sol",
+    color: "#fbbf24",
+  }),
+  luna: Object.freeze({
+    agentId: "luna",
+    label: "GPT-5.6 Luna",
+    engine: "runner",
+    model: "gpt-5.6-luna",
+    color: "#93c5fd",
+  }),
+  terra: Object.freeze({
+    agentId: "terra",
+    label: "GPT-5.6 Terra",
+    engine: "runner",
+    model: "gpt-5.6-terra",
+    color: "#86efac",
+  }),
   claude: Object.freeze({
     agentId: "claude",
     label: "Claude Code",
