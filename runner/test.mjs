@@ -342,6 +342,10 @@ esac
       "-m",
       TURBO_MODEL,
       "--skip-git-repo-check",
+      "-c",
+      "sandbox_mode=danger-full-access",
+      "-c",
+      "approval_policy=never",
       TURBO_THREAD_ID,
       expectedPrompt("Lee", "Keep running until interrupted"),
     ]);
@@ -409,6 +413,10 @@ esac
       "-m",
       DEEP_MODEL,
       "--skip-git-repo-check",
+      "-c",
+      "sandbox_mode=danger-full-access",
+      "-c",
+      "approval_policy=never",
       DEEP_THREAD_ID,
       expectedPrompt("Ari", "Finish and linger"),
     ]);
@@ -817,6 +825,10 @@ esac
       "-m",
       TURBO_MODEL,
       "--skip-git-repo-check",
+      "-c",
+      "sandbox_mode=danger-full-access",
+      "-c",
+      "approval_policy=never",
       importThreadId,
       expectedPrompt("Tess", "Use imported memory"),
     ]);
@@ -827,6 +839,10 @@ esac
       "-m",
       TURBO_MODEL,
       "--skip-git-repo-check",
+      "-c",
+      "sandbox_mode=danger-full-access",
+      "-c",
+      "approval_policy=never",
       capturedImportThreadId,
       expectedPrompt("Tess", "Continue imported work"),
     ]);

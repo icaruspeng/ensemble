@@ -236,6 +236,12 @@ function codexArguments(task, prompt) {
     "-m",
     task.model,
     "--skip-git-repo-check",
+    // resume inherits the original session's sandbox (an imported solo session
+    // may be scoped to another machine's paths) — force devbox-appropriate policy.
+    "-c",
+    "sandbox_mode=danger-full-access",
+    "-c",
+    "approval_policy=never",
     threadId,
     prompt,
   ];
