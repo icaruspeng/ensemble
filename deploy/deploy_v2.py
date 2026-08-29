@@ -21,6 +21,42 @@ STATE = ROOT / "deploy" / "state_v2.json"
 KEEP_ALIVE = 8 * 3600
 
 
+def read_state():
+    if not STATE.exists():
+        return {}
+    state = json.loads(STATE.read_text())
+    if not isinstance(state, dict):
+        raise ValueError(f"deployment state must be a JSON object: {STATE}")
+    return state
+
+
+def write_state(state):
+    """Atomically persist deployment progress so teardown can always recover it."""
+    pending = STATE.with_name(f".{STATE.name}.{os.getpid()}.tmp")
+    pending.write_text(json.dumps(state, indent=2) + "\n")
+    pending.replace(STATE)
+
+
+def build_web():
+    try:
+        subprocess.run(
+            ["npm", "run", "build"],
+            cwd=ROOT / "web",
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except subprocess.CalledProcessError as error:
+        print(f"web npm build failed with exit code {error.returncode}", file=sys.stderr)
+        if error.stdout:
+            print("--- npm build stdout ---", file=sys.stderr)
+            print(error.stdout.rstrip(), file=sys.stderr)
+        if error.stderr:
+            print("--- npm build stderr ---", file=sys.stderr)
+            print(error.stderr.rstrip(), file=sys.stderr)
+        raise
+
+
 def run_long(devbox, name, command, timeout=420):
     wrapped = (
         f"nohup bash -lc '({command}) > /tmp/{name}.log 2>&1 && "
@@ -61,7 +97,7 @@ def main():
     sdk = RunloopSDK()
 
     if "--teardown" in sys.argv:
-        st = json.loads(STATE.read_text())
+        st = read_state()
         for key in ("hub_id", "demo_ws_id"):
             if st.get(key):
                 try:
@@ -71,6 +107,7 @@ def main():
                     print(f"({key}: {e})")
         return
 
+    state = read_state()
     reflex_cfg = {}
     tui = Path.home() / ".reflex" / "tui.json"
     if tui.exists():
@@ -79,7 +116,7 @@ def main():
     ensemble_key = secrets.token_hex(16)
 
     print("== bundling ==")
-    subprocess.run(["npm", "run", "build"], cwd=ROOT / "web", check=True, capture_output=True)
+    build_web()
     main_bundle = ROOT / "deploy" / "bundle_v2.tgz"
     ws_bundle = ROOT / "deploy" / "workspace-bundle.tgz"
     subprocess.run(["tar", "czf", str(main_bundle), "--exclude", "node_modules", "--exclude", ".git",
@@ -94,6 +131,8 @@ def main():
         mounts=[{"type": "agent_mount", "agent_name": "codex"}],
         launch_parameters={"keep_alive_time_seconds": KEEP_ALIVE},
     )
+    state["demo_ws_id"] = ws.id
+    write_state(state)
     print("  id=", ws.id)
     ws.cmd.exec("mkdir -p /home/user/app /home/user/.codex")
     upload(ws, Path.home() / ".codex" / "auth.json", "/home/user/.codex/auth.json")
@@ -111,6 +150,8 @@ def main():
     print("== hub devbox ==")
     hub = sdk.devbox.create(name="ensemble-hub-v2",
                             launch_parameters={"keep_alive_time_seconds": KEEP_ALIVE})
+    state["hub_id"] = hub.id
+    write_state(state)
     print("  id=", hub.id)
     hub.cmd.exec("mkdir -p /home/user/app")
     upload(hub, main_bundle, "/home/user/app/bundle.tgz")
@@ -144,11 +185,12 @@ def main():
                  f'cd /home/user/app/runner && SERVER_URL={hub_url} ENSEMBLE_KEY={ensemble_key} '
                  f'ROOM_ID=demo AGENTS="{agents}" TARGET_DIR=/home/user/app/target-app node index.mjs')
 
-    STATE.write_text(json.dumps({
+    state.update({
         "hub_id": hub.id, "demo_ws_id": ws.id, "hub_url": hub_url,
         "preview_url": preview_url, "ensemble_key": ensemble_key,
         "deployed_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-    }, indent=2))
+    })
+    write_state(state)
     print(f"\nSTATE -> {STATE}\nHOME/QR URL: {hub_url}")
 
 

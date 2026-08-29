@@ -5,8 +5,11 @@ const DEFAULT_API_BASE_URL = "https://api.runloop.ai/v1";
 const DEFAULT_MAX_LIVE_WORKSPACES = 2;
 const DEFAULT_REQUEST_TIMEOUT_MS = 40_000;
 const DEFAULT_HEALTH_ATTEMPTS = 30;
+const DEFAULT_SUSPEND_WAIT_ATTEMPTS = 1;
+const DEFAULT_CLOSE_SUSPEND_TIMEOUT_MS = 5_000;
 const DEVBOX_WAIT_SECONDS = 30;
 const EXECUTION_WAIT_SECONDS = 25;
+const POLL_RETRY_DELAY_MS = 250;
 
 const APP_DIR = "/home/user/app";
 const AUTH_DIR = "/home/user/.codex";
@@ -19,6 +22,15 @@ const PREVIEW_PORT = 5173;
 const RUNNER_PORT = 8091;
 
 const TERMINAL_DEVBOX_STATUSES = new Set(["failure", "shutdown"]);
+const TERMINAL_EXECUTION_STATUSES = new Set([
+  "cancelled",
+  "canceled",
+  "error",
+  "failed",
+  "failure",
+  "timed_out",
+  "timeout",
+]);
 
 function isObject(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -199,6 +211,15 @@ export class RemoteCommandError extends Error {
   }
 }
 
+class TerminalDevboxStateError extends Error {
+  constructor(devboxId, status, view) {
+    super(`Runloop devbox ${devboxId} entered terminal state ${status}`);
+    this.name = "TerminalDevboxStateError";
+    this.devboxStatus = status;
+    this.view = view;
+  }
+}
+
 /**
  * Create an injectable Runloop workspace provisioner.
  *
@@ -230,7 +251,11 @@ export function createProvisioner(options = {}) {
   const healthAttempts = options.healthAttempts ?? DEFAULT_HEALTH_ATTEMPTS;
   const healthIntervalMs = options.healthIntervalMs ?? 2_000;
   const statusWaitAttempts = options.statusWaitAttempts ?? 24;
+  const suspendWaitAttempts =
+    options.suspendWaitAttempts ?? DEFAULT_SUSPEND_WAIT_ATTEMPTS;
   const executionWaitAttempts = options.executionWaitAttempts ?? 32;
+  const closeSuspendTimeoutMs =
+    options.closeSuspendTimeoutMs ?? DEFAULT_CLOSE_SUSPEND_TIMEOUT_MS;
   const defaultOnProgress = options.onProgress;
   const defaultOnSuspend = options.onSuspend;
 
@@ -239,6 +264,9 @@ export function createProvisioner(options = {}) {
   }
   if (!Number.isInteger(maxLive) || maxLive < 1) {
     throw new TypeError("maxLiveWorkspaces must be a positive integer");
+  }
+  if (!Number.isInteger(suspendWaitAttempts) || suspendWaitAttempts < 1) {
+    throw new TypeError("suspendWaitAttempts must be a positive integer");
   }
 
   let authContents = null;
@@ -335,12 +363,43 @@ export function createProvisioner(options = {}) {
     return responseBody;
   }
 
+  async function cleanupRequest(path, { method = "POST", body } = {}) {
+    const url = endpoint(apiBaseUrl, path);
+    const headers = {
+      Authorization: `Bearer ${apiKey}`,
+      Accept: "application/json",
+    };
+    const init = {
+      method,
+      headers,
+      signal: AbortSignal.timeout(closeSuspendTimeoutMs),
+    };
+    if (body !== undefined) {
+      headers["Content-Type"] = "application/json";
+      init.body = JSON.stringify(body);
+    }
+
+    const response = await fetchImpl(url, init);
+    const responseBody = await parseResponse(response);
+    const status = Number(response?.status ?? 200);
+    const ok = response?.ok ?? (status >= 200 && status < 300);
+    if (!ok) {
+      throw new RunloopRequestError(method, url, status, responseBody);
+    }
+    return responseBody;
+  }
+
   function post(path, body, timeoutMs) {
     return apiRequest(path, { method: "POST", body, timeoutMs });
   }
 
-  async function waitForDevbox(devboxId, statuses, expectedStatus) {
-    for (let attempt = 0; attempt < statusWaitAttempts; attempt += 1) {
+  async function waitForDevbox(
+    devboxId,
+    statuses,
+    expectedStatus,
+    attempts = statusWaitAttempts,
+  ) {
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
       let view;
       try {
         view = await post(`devboxes/${encodeURIComponent(devboxId)}/wait_for_status`, {
@@ -354,33 +413,43 @@ export function createProvisioner(options = {}) {
 
       if (view?.status === expectedStatus) return view;
       if (TERMINAL_DEVBOX_STATUSES.has(view?.status)) {
-        throw new Error(
-          `Runloop devbox ${devboxId} entered terminal state ${view.status}`,
-        );
+        throw new TerminalDevboxStateError(devboxId, view.status, view);
       }
-      await sleep(250, undefined, { signal: closeController.signal });
+      await sleep(POLL_RETRY_DELAY_MS, undefined, {
+        signal: closeController.signal,
+      });
     }
     throw new Error(
       `Timed out waiting for Runloop devbox ${devboxId} to become ${expectedStatus}`,
     );
   }
 
-  async function waitForExecution(devboxId, executionId) {
+  async function waitForExecution(devboxId, executionId, label) {
     for (let attempt = 0; attempt < executionWaitAttempts; attempt += 1) {
+      let execution;
       try {
-        const execution = await post(
+        execution = await post(
           `devboxes/${encodeURIComponent(devboxId)}/executions/${encodeURIComponent(
             executionId,
           )}/wait_for_status`,
           {
-            statuses: ["completed"],
+            statuses: ["completed", ...TERMINAL_EXECUTION_STATUSES],
             timeout_seconds: EXECUTION_WAIT_SECONDS,
           },
         );
         if (execution?.status === "completed") return execution;
       } catch (error) {
-        if (error instanceof RunloopRequestError && error.status === 408) continue;
-        throw error;
+        if (!(error instanceof RunloopRequestError && error.status === 408)) {
+          throw error;
+        }
+      }
+      if (TERMINAL_EXECUTION_STATUSES.has(execution?.status)) {
+        throw new RemoteCommandError(label, execution);
+      }
+      if (attempt + 1 < executionWaitAttempts) {
+        await sleep(POLL_RETRY_DELAY_MS, undefined, {
+          signal: closeController.signal,
+        });
       }
     }
     throw new Error(`Timed out waiting for remote command ${executionId}`);
@@ -409,7 +478,7 @@ export function createProvisioner(options = {}) {
       if (!executionId) {
         throw new Error(`${label} did not return a Runloop execution_id`);
       }
-      execution = await waitForExecution(devboxId, executionId);
+      execution = await waitForExecution(devboxId, executionId, label);
     }
     return assertExecutionSucceeded(label, execution);
   }
@@ -455,29 +524,29 @@ export function createProvisioner(options = {}) {
     await callCallbacks([callback], event, "workspace suspension");
   }
 
-  async function suspendRecord(record, reason, requesterOnSuspend) {
-    if (!record?.active) return;
-    if (record.pinned) {
-      throw new Error(`Pinned workspace ${record.roomId} cannot be suspended`);
+  function inactiveStatusFromError(error) {
+    if (error instanceof TerminalDevboxStateError) {
+      return error.devboxStatus;
     }
-    if (!record.devboxId) {
-      throw new Error(`Workspace ${record.roomId} is not ready to suspend`);
+    if (
+      error instanceof RunloopRequestError &&
+      error.status >= 400 &&
+      error.status < 500
+    ) {
+      return "inactive";
     }
+    return null;
+  }
 
-    const result = await post(
-      `devboxes/${encodeURIComponent(record.devboxId)}/suspend`,
-    );
-    if (result?.status !== "suspended") {
-      await waitForDevbox(
-        record.devboxId,
-        ["suspended", "failure", "shutdown"],
-        "suspended",
-      );
-    }
-
+  async function deactivateRecord(
+    record,
+    status,
+    detail,
+    reason,
+    requesterOnSuspend,
+  ) {
     record.active = false;
-    record.status = "suspended";
-    const detail = "Workspace suspended to stay within the two-workspace limit";
+    record.status = status;
     if (record.room) {
       record.room.workspace = {
         status: "error",
@@ -491,6 +560,80 @@ export function createProvisioner(options = {}) {
     await notifySuspended(record, reason, requesterOnSuspend);
   }
 
+  async function suspendRecord(record, reason, requesterOnSuspend) {
+    if (!record?.active) return;
+    if (record.pinned) {
+      throw new Error(`Pinned workspace ${record.roomId} cannot be suspended`);
+    }
+    if (!record.devboxId) {
+      throw new Error(`Workspace ${record.roomId} is not ready to suspend`);
+    }
+
+    let result;
+    try {
+      result = await post(
+        `devboxes/${encodeURIComponent(record.devboxId)}/suspend`,
+        undefined,
+        Math.min(requestTimeoutMs, 10_000),
+      );
+      if (TERMINAL_DEVBOX_STATUSES.has(result?.status)) {
+        throw new TerminalDevboxStateError(
+          record.devboxId,
+          result.status,
+          result,
+        );
+      }
+      if (result?.status !== "suspended") {
+        await waitForDevbox(
+          record.devboxId,
+          ["suspended", "failure", "shutdown"],
+          "suspended",
+          suspendWaitAttempts,
+        );
+      }
+    } catch (error) {
+      const inactiveStatus = inactiveStatusFromError(error);
+      if (!inactiveStatus) throw error;
+      await deactivateRecord(
+        record,
+        inactiveStatus,
+        "Workspace was already inactive while freeing capacity",
+        reason,
+        requesterOnSuspend,
+      );
+      return;
+    }
+
+    await deactivateRecord(
+      record,
+      "suspended",
+      "Workspace suspended to stay within the two-workspace limit",
+      reason,
+      requesterOnSuspend,
+    );
+  }
+
+  async function shutdownRecord(record) {
+    if (!record?.devboxId) return;
+    try {
+      await post(
+        `devboxes/${encodeURIComponent(record.devboxId)}/shutdown`,
+        {},
+        Math.min(requestTimeoutMs, 10_000),
+      );
+    } catch (error) {
+      if (
+        !(error instanceof RunloopRequestError) ||
+        error.status < 400 ||
+        error.status >= 500
+      ) {
+        throw error;
+      }
+    }
+    record.active = false;
+    record.status = "shutdown";
+  }
+
   function serializeCapacity(operation) {
     const result = capacityQueue.then(operation, operation);
     capacityQueue = result.catch(() => {});
@@ -498,52 +641,173 @@ export function createProvisioner(options = {}) {
   }
 
   async function reserveCapacity(room, callbacks) {
-    return serializeCapacity(async () => {
-      const oldRecord = records.get(room.roomId);
-      if (oldRecord?.active && !oldRecord.pinned) {
-        await suspendRecord(oldRecord, "retry", callbacks.onSuspend);
-      }
+    while (true) {
+      const decision = await serializeCapacity(async () => {
+        if (closed) throw new Error("Workspace provisioner is closed");
 
-      while (activeRecords().length >= maxLive) {
-        const candidate = activeRecords()
-          .filter(
-            (record) =>
-              !record.pinned &&
-              record.roomId !== room.roomId &&
-              record.devboxId &&
-              record.status !== "provisioning",
-          )
-          .sort(
-            (left, right) =>
-              left.lastUsedAt - right.lastUsedAt ||
-              left.accessSequence - right.accessSequence,
-          )[0];
+        const oldRecord = records.get(room.roomId);
+        const resumable = Boolean(
+          oldRecord &&
+            !oldRecord.active &&
+            oldRecord.status === "suspended" &&
+            oldRecord.devboxId &&
+            oldRecord.workspace,
+        );
 
-        if (!candidate) {
-          throw new Error(
-            "Workspace capacity is full and no non-pinned workspace can be suspended",
-          );
+        if (oldRecord?.active && !oldRecord.pinned) {
+          try {
+            await suspendRecord(oldRecord, "retry", callbacks.onSuspend);
+          } catch (error) {
+            logWarning(
+              error,
+              `Could not suspend retry workspace ${oldRecord.roomId}; shutting it down`,
+            );
+          }
+          await shutdownRecord(oldRecord);
+        } else if (
+          oldRecord?.devboxId &&
+          !resumable &&
+          !TERMINAL_DEVBOX_STATUSES.has(oldRecord.status)
+        ) {
+          // Never overwrite the only reference to a live or suspended devbox.
+          await shutdownRecord(oldRecord);
         }
-        await suspendRecord(candidate, "lru", callbacks.onSuspend);
-      }
 
-      const record = {
-        roomId: room.roomId,
-        room,
-        workspace: null,
-        devboxId: null,
-        status: "provisioning",
-        active: true,
-        pinned: false,
-        onProgress: callbacks.onProgress,
-        onSuspend: callbacks.onSuspend,
-        lastUsedAt: 0,
-        accessSequence: 0,
-      };
-      markUsed(record);
-      records.set(room.roomId, record);
-      return record;
+        while (activeRecords().length >= maxLive) {
+          const candidate = activeRecords()
+            .filter(
+              (record) =>
+                !record.pinned &&
+                record.roomId !== room.roomId &&
+                record.devboxId &&
+                record.status !== "provisioning" &&
+                record.status !== "resuming",
+            )
+            .sort(
+              (left, right) =>
+                left.lastUsedAt - right.lastUsedAt ||
+                left.accessSequence - right.accessSequence,
+            )[0];
+
+          if (!candidate) {
+            const waitFor = [...inflight.entries()]
+              .filter(([roomId]) => {
+                if (roomId === room.roomId) return false;
+                const inflightRecord = records.get(roomId);
+                return (
+                  inflightRecord?.active &&
+                  (inflightRecord.status === "provisioning" ||
+                    inflightRecord.status === "resuming")
+                );
+              })
+              .map(([, promise]) => promise);
+            if (waitFor.length > 0) return { waitFor };
+            throw new Error(
+              "Workspace capacity is full and no non-pinned workspace can be suspended",
+            );
+          }
+          try {
+            await suspendRecord(candidate, "lru", callbacks.onSuspend);
+          } catch (error) {
+            logWarning(
+              error,
+              `Could not suspend LRU workspace ${candidate.roomId}; marking it inactive`,
+            );
+            await deactivateRecord(
+              candidate,
+              "inactive",
+              "Workspace became inactive while freeing capacity",
+              "lru",
+              callbacks.onSuspend,
+            );
+          }
+        }
+
+        if (resumable && records.get(room.roomId) === oldRecord) {
+          oldRecord.room = room;
+          oldRecord.onProgress = callbacks.onProgress ?? oldRecord.onProgress;
+          oldRecord.onSuspend = callbacks.onSuspend ?? oldRecord.onSuspend;
+          oldRecord.active = true;
+          oldRecord.status = "resuming";
+          markUsed(oldRecord);
+          return { record: oldRecord, resume: true };
+        }
+
+        const record = {
+          roomId: room.roomId,
+          room,
+          workspace: null,
+          devboxId: null,
+          status: "provisioning",
+          active: true,
+          pinned: false,
+          onProgress: callbacks.onProgress,
+          onSuspend: callbacks.onSuspend,
+          lastUsedAt: 0,
+          accessSequence: 0,
+        };
+        markUsed(record);
+        records.set(room.roomId, record);
+        return { record, resume: false };
+      });
+
+      if (decision.record) return decision;
+      await Promise.allSettled(decision.waitFor);
+      if (closed) throw new Error("Workspace provisioner is closed");
+    }
+  }
+
+  async function resumeWorkspace(record, room) {
+    room.workspace = {
+      status: "provisioning",
+      devboxId: record.devboxId,
+      ...(record.workspace?.previewUrl
+        ? { previewUrl: record.workspace.previewUrl }
+        : {}),
+    };
+    await report(record, "workspace.status", {
+      status: "provisioning",
+      detail: "Resuming the existing Runloop workspace",
     });
+
+    const resumed = await post(
+      `devboxes/${encodeURIComponent(record.devboxId)}/resume`,
+      {},
+    );
+    if (TERMINAL_DEVBOX_STATUSES.has(resumed?.status)) {
+      throw new TerminalDevboxStateError(
+        record.devboxId,
+        resumed.status,
+        resumed,
+      );
+    }
+    if (resumed?.status !== "running") {
+      await waitForDevbox(
+        record.devboxId,
+        ["running", "failure", "shutdown"],
+        "running",
+      );
+    }
+    if (!record.workspace?.previewUrl) {
+      throw new Error(`Workspace ${record.roomId} has no preview to resume`);
+    }
+
+    record.active = true;
+    record.status = "ready";
+    markUsed(record);
+    room.workspace = {
+      status: "ready",
+      devboxId: record.workspace.devboxId,
+      previewUrl: record.workspace.previewUrl,
+    };
+    await report(record, "preview.updated", {
+      url: record.workspace.previewUrl,
+    });
+    await report(record, "workspace.status", {
+      status: "ready",
+      detail: "Workspace resumed",
+    });
+    return { ...record.workspace };
   }
 
   async function provisionInternal(room, callbacks) {
@@ -582,7 +846,24 @@ export function createProvisioner(options = {}) {
       if (callbacks.preflightError) throw callbacks.preflightError;
       if (configurationError) throw configurationError;
 
-      record = await reserveCapacity(room, callbacks);
+      let reservation = await reserveCapacity(room, callbacks);
+      record = reservation.record;
+      if (reservation.resume) {
+        try {
+          return await resumeWorkspace(record, room);
+        } catch (error) {
+          const inactiveStatus = inactiveStatusFromError(error);
+          if (!inactiveStatus) throw error;
+          record.active = false;
+          record.status = inactiveStatus;
+          logWarning(
+            error,
+            `Existing workspace ${record.roomId} could not be resumed; replacing it`,
+          );
+          reservation = await reserveCapacity(room, callbacks);
+          record = reservation.record;
+        }
+      }
       room.workspace = { status: "provisioning" };
       await report(record, "workspace.status", {
         status: "provisioning",
@@ -841,6 +1122,35 @@ export function createProvisioner(options = {}) {
     closed = true;
     closeController.abort(new Error("Workspace provisioner closed"));
     await Promise.allSettled([...inflight.values()]);
+
+    const active = activeRecords().filter(
+      (record) => !record.pinned && record.devboxId,
+    );
+    await Promise.allSettled(
+      active.map(async (record) => {
+        try {
+          await cleanupRequest(
+            `devboxes/${encodeURIComponent(record.devboxId)}/suspend`,
+          );
+          record.active = false;
+          record.status = "suspended";
+        } catch (error) {
+          if (
+            error instanceof RunloopRequestError &&
+            error.status >= 400 &&
+            error.status < 500
+          ) {
+            record.active = false;
+            record.status = "inactive";
+            return;
+          }
+          logWarning(
+            error,
+            `Could not suspend workspace ${record.roomId} during shutdown`,
+          );
+        }
+      }),
+    );
   }
 
   if (env.DEMO_ROOM === "1" && nonemptyString(env.DEMO_WORKSPACE_JSON)) {

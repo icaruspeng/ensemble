@@ -4,6 +4,8 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 const INITIAL_RECONNECT_DELAY_MS = 1_000;
 const MAX_RECONNECT_DELAY_MS = 30_000;
 const MAX_SEEN_EVENT_IDS = 5_000;
+const MAX_TRACKED_TOOL_CALLS = 50;
+const MAX_TRACKED_TURNS = 50;
 
 function isObject(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -17,6 +19,14 @@ function finiteNonnegative(value) {
   return typeof value === "number" && Number.isFinite(value) && value >= 0
     ? value
     : null;
+}
+
+function rememberBounded(map, key, value, limit) {
+  map.delete(key);
+  map.set(key, value);
+  while (map.size > limit) {
+    map.delete(map.keys().next().value);
+  }
 }
 
 function parseObject(value) {
@@ -426,7 +436,9 @@ export function createReflexAdapter(options = {}) {
 
     session.activeTask = { taskId, reference };
     session.turnTokens = 0;
-    if (reference) session.turnTasks.set(reference, taskId);
+    if (reference) {
+      rememberBounded(session.turnTasks, reference, taskId, MAX_TRACKED_TURNS);
+    }
     await emitSafely(session, "agent.turn_started", { taskId });
     return session.activeTask;
   }
@@ -440,6 +452,7 @@ export function createReflexAdapter(options = {}) {
 
   async function completeTurn(session, payload, overrideTaskId = null) {
     const reference = turnReference(payload);
+    const completedReference = reference ?? session.activeTask?.reference;
     let taskId =
       overrideTaskId ??
       explicitTaskId(payload) ??
@@ -481,6 +494,7 @@ export function createReflexAdapter(options = {}) {
     session.lastCompletedAt = Date.now();
     session.activeTask = null;
     session.turnTokens = 0;
+    if (completedReference) session.turnTasks.delete(completedReference);
   }
 
   async function emitText(session, type, value, payload, overrideTaskId) {
@@ -503,9 +517,20 @@ export function createReflexAdapter(options = {}) {
     if (!command && diffs.length === 0) return;
 
     await ensureTurn(session, payload, overrideTaskId);
-    if (toolId) session.toolCalls.set(toolId, { toolName, command, item });
+    const exitCode = integerFrom(item.exitCode, item.exit_code);
+    if (toolId) {
+      rememberBounded(
+        session.toolCalls,
+        toolId,
+        {
+          toolName,
+          command,
+          failureReported: exitCode !== null && exitCode !== 0,
+        },
+        MAX_TRACKED_TOOL_CALLS,
+      );
+    }
     if (command) {
-      const exitCode = integerFrom(item.exitCode, item.exit_code);
       await emitSafely(session, "agent.command", {
         command,
         ...(exitCode !== null ? { exitCode } : {}),
@@ -517,8 +542,7 @@ export function createReflexAdapter(options = {}) {
   async function handleToolUpdate(session, item, payload, overrideTaskId) {
     const toolId = firstString(item.toolCallId, item.tool_call_id, item.tool_use_id, item.id);
     const tracked = toolId ? session.toolCalls.get(toolId) : null;
-    const merged = tracked ? { ...tracked.item, ...item } : item;
-    const diffs = diffsFromItem(merged, tracked?.toolName ?? "");
+    const diffs = diffsFromItem(item, tracked?.toolName ?? "");
     if (diffs.length > 0) {
       await ensureTurn(session, payload, overrideTaskId);
       for (const diff of diffs) await emitSafely(session, "agent.diff", diff);
@@ -530,12 +554,18 @@ export function createReflexAdapter(options = {}) {
       isObject(item.output) ? item.output.exitCode : null,
       isObject(item.output) ? item.output.exit_code : null,
     );
-    if (tracked?.command && exitCode !== null) {
+    if (
+      tracked?.command &&
+      exitCode !== null &&
+      exitCode !== 0 &&
+      !tracked.failureReported
+    ) {
       await ensureTurn(session, payload, overrideTaskId);
       await emitSafely(session, "agent.command", {
         command: tracked.command,
         exitCode,
       });
+      tracked.failureReported = true;
     }
   }
 

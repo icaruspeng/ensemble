@@ -2,10 +2,34 @@ import { useEffect, useState } from "react";
 
 const NOTE_COLORS = ["#ffe066", "#ffd6a5", "#caffbf", "#9bf6ff", "#ffc6ff"];
 
-function loadNotes() {
-  if (typeof window === "undefined") return [];
+function readStorage(key) {
+  if (typeof window === "undefined") return null;
   try {
-    const raw = localStorage.getItem("roomboard-notes");
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function writeStorage(key, value) {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    // Keep the board usable when an embedded browser blocks storage access.
+  }
+}
+
+function removeStorage(key) {
+  try {
+    localStorage.removeItem(key);
+  } catch {
+    // Keep the in-memory signer when an embedded browser blocks storage access.
+  }
+}
+
+function loadNotes() {
+  try {
+    const raw = readStorage("roomboard-notes");
     const parsed = raw ? JSON.parse(raw) : [];
     return Array.isArray(parsed) ? parsed : [];
   } catch {
@@ -13,38 +37,47 @@ function loadNotes() {
   }
 }
 
+function loadAuthor() {
+  return readStorage("roomboard-author")?.trim() ?? "";
+}
+
 export default function App() {
   const [isDark, setIsDark] = useState(() => {
     if (typeof window === "undefined") {
       return false;
     }
-    const saved = localStorage.getItem("roomboard-theme");
+    const saved = readStorage("roomboard-theme");
     if (saved === "dark") return true;
     if (saved === "light") return false;
     return window.matchMedia("(prefers-color-scheme: dark)").matches;
   });
   const [notes, setNotes] = useState(loadNotes);
+  const [author, setAuthor] = useState(loadAuthor);
 
   useEffect(() => {
     document.body.classList.toggle("theme-dark", isDark);
-    localStorage.setItem("roomboard-theme", isDark ? "dark" : "light");
+    writeStorage("roomboard-theme", isDark ? "dark" : "light");
   }, [isDark]);
 
   useEffect(() => {
-    localStorage.setItem("roomboard-notes", JSON.stringify(notes));
+    writeStorage("roomboard-notes", JSON.stringify(notes));
   }, [notes]);
 
-  const addNote = () => {
-    let author = localStorage.getItem("roomboard-author") || "";
-    if (!author) {
-      author = (window.prompt("Sign your notes — what's your name?") || "").trim();
-      if (author) localStorage.setItem("roomboard-author", author);
+  useEffect(() => {
+    const name = author.trim();
+    if (name) {
+      writeStorage("roomboard-author", name);
+    } else {
+      removeStorage("roomboard-author");
     }
+  }, [author]);
+
+  const addNote = () => {
     const note = {
       id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
       text: "",
       votes: 0,
-      author: author || "anonymous",
+      author: author.trim() || "anonymous",
       color: NOTE_COLORS[notes.length % NOTE_COLORS.length],
     };
     setNotes((prev) => [...prev, note]);
@@ -77,6 +110,20 @@ export default function App() {
           {isDark ? "☀️" : "🌙"}
         </button>
       </header>
+
+      <div className="signer-row">
+        <label className="signer-control">
+          <span>signing as</span>
+          <input
+            type="text"
+            value={author}
+            onChange={(event) => setAuthor(event.target.value)}
+            placeholder="your name"
+            autoComplete="name"
+            maxLength={40}
+          />
+        </label>
+      </div>
 
       <main className="board" aria-label="Shared room board">
         {notes.length === 0 && (
