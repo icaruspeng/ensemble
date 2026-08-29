@@ -1,6 +1,14 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  access,
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { createServer } from "node:http";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
@@ -91,11 +99,30 @@ function expectedPrompt(authorName, text) {
   return `[Directed by ${authorName} in a live multiplayer session] ${text}. Keep changes small and immediately visible in the running app. Do not restart the dev server; it hot-reloads.`;
 }
 
+function callFor(calls, authorName, text) {
+  const prompt = expectedPrompt(authorName, text);
+  const call = calls.find((candidate) => candidate.args.at(-1) === prompt);
+  assert(call, `Missing Codex call for prompt: ${prompt}`);
+  return call;
+}
+
 test("isolates agent threads and models, maps JSONL, and interrupts", async () => {
   const testDirectory = await mkdtemp(join(RUNNER_DIR, ".test-"));
   const fakeCodex = join(testDirectory, "fake-codex.sh");
   const invocationLog = join(testDirectory, "invocations.log");
   const targetDirectory = join(testDirectory, "target app");
+  const overlapRelease = join(testDirectory, "overlap-release");
+  const turboOverlapStarted = join(testDirectory, "turbo-overlap-started");
+  const deepOverlapStarted = join(testDirectory, "deep-overlap-started");
+  const deepFinishedNormally = join(testDirectory, "deep-finished-normally");
+  const turboAllInterruptStarted = join(
+    testDirectory,
+    "turbo-all-interrupt-started",
+  );
+  const deepAllInterruptStarted = join(
+    testDirectory,
+    "deep-all-interrupt-started",
+  );
   await mkdir(targetDirectory);
   await writeFile(invocationLog, "");
   const interruptPort = await availablePort();
@@ -103,6 +130,9 @@ test("isolates agent threads and models, maps JSONL, and interrupts", async () =
   const fakeScript = String.raw`#!/bin/sh
 set -eu
 
+while ! mkdir "$FAKE_CODEX_LOG.lock" 2>/dev/null; do
+  /bin/sleep 0.01
+done
 {
   printf '%s\n' 'CALL'
   for arg in "$@"; do
@@ -114,6 +144,7 @@ set -eu
     printf 'STDIN\tclosed\n'
   fi
 } >> "$FAKE_CODEX_LOG"
+rmdir "$FAKE_CODEX_LOG.lock"
 
 last=''
 for arg in "$@"; do
@@ -122,6 +153,10 @@ done
 
 case "$last" in
   *"Paint the room"*)
+    : > "$FAKE_CODEX_DIR/turbo-overlap-started"
+    while [ ! -f "$FAKE_CODEX_DIR/overlap-release" ]; do
+      /bin/sleep 0.01
+    done
     printf '%s\n' '{"type":"thread.started","thread_id":"thread_turbo_123"}'
     printf '%s\r\n' '{"type":"turn.started"}'
     printf '%s\n' '{"type":"item.completed","item":{"id":"reason-1","type":"reasoning","summary":[{"text":"Planning carefully"}]}}'
@@ -140,6 +175,10 @@ case "$last" in
     printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":100,"cached_input_tokens":90,"output_tokens":20,"reasoning_output_tokens":7}}'
     ;;
   *"Add votes"*)
+    : > "$FAKE_CODEX_DIR/deep-overlap-started"
+    while [ ! -f "$FAKE_CODEX_DIR/overlap-release" ]; do
+      /bin/sleep 0.01
+    done
     printf '%s\n' '{"type":"thread.started","thread_id":"thread_deep_456"}'
     printf '%s\n' '{"type":"item.completed","item":{"id":"patch-2","type":"patch_application","file":"src/styles.css","patch":"--- a/src/styles.css\n+++ b/src/styles.css"}}'
     printf '%s\n' '{"type":"item.completed","item":{"id":"message-2","type":"agent_message","text":"Votes are ready\nAdded buttons"}}'
@@ -157,7 +196,22 @@ case "$last" in
     printf '%s\n' '{"type":"item.completed","item":{"id":"message-4","type":"agent_message","text":"Already finished"}}'
     printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":2,"output_tokens":1}}'
     trap '' HUP INT TERM
-    exec /bin/sleep 2
+    /bin/sleep 2
+    : > "$FAKE_CODEX_DIR/deep-finished-normally"
+    ;;
+  *"Wait for room-wide interrupt turbo"*)
+    : > "$FAKE_CODEX_DIR/turbo-all-interrupt-started"
+    printf '%s\n' '{"type":"thread.started","thread_id":"thread_turbo_123"}'
+    printf '%s\n' '{"type":"item.completed","item":{"type":"reasoning","text":"turbo awaits room interrupt"}}'
+    trap '' HUP INT TERM
+    exec /bin/sleep 30
+    ;;
+  *"Wait for room-wide interrupt deep"*)
+    : > "$FAKE_CODEX_DIR/deep-all-interrupt-started"
+    printf '%s\n' '{"type":"thread.started","thread_id":"thread_deep_456"}'
+    printf '%s\n' '{"type":"item.completed","item":{"type":"reasoning","text":"deep awaits room interrupt"}}'
+    trap '' HUP INT TERM
+    exec /bin/sleep 30
     ;;
   *)
     printf '%s\n' 'unexpected prompt' >&2
@@ -198,11 +252,32 @@ esac
       agentId: "deep",
       model: DEEP_MODEL,
     },
+    {
+      taskId: "task-5",
+      text: "Wait for room-wide interrupt turbo",
+      authorName: "Noa",
+      agentId: "turbo",
+      model: TURBO_MODEL,
+    },
+    {
+      taskId: "task-6",
+      text: "Wait for room-wide interrupt deep",
+      authorName: "Noa",
+      agentId: "deep",
+      model: DEEP_MODEL,
+    },
   ];
+  const taskQueues = new Map(
+    AGENTS.map(({ agentId }) => [
+      agentId,
+      tasks.filter((task) => task.agentId === agentId),
+    ]),
+  );
+  const currentTasks = new Map();
   const state = {
     nextTaskRequests: 0,
     eventBatches: [],
-    interruptedReports: 0,
+    interruptedReports: [],
     invalidKeys: [],
     invalidRoomIds: [],
   };
@@ -226,11 +301,18 @@ esac
         requestUrl.pathname === "/runner/next-task"
       ) {
         state.nextTaskRequests += 1;
-        const task = tasks.shift();
+        const availableAgent = AGENTS.find(
+          ({ agentId }) =>
+            !currentTasks.has(agentId) && taskQueues.get(agentId).length > 0,
+        );
+        const task = availableAgent
+          ? taskQueues.get(availableAgent.agentId).shift()
+          : undefined;
         if (!task) {
           response.writeHead(204).end();
           return;
         }
+        currentTasks.set(task.agentId, task);
         response.writeHead(200, { "content-type": "application/json" });
         response.end(JSON.stringify(task));
         return;
@@ -242,6 +324,15 @@ esac
       ) {
         const body = JSON.parse(await requestBody(request));
         state.eventBatches.push(body);
+        for (const event of body) {
+          if (event.type !== "agent.turn_completed") {
+            continue;
+          }
+          const current = currentTasks.get(event.payload.agentId);
+          if (current?.taskId === event.payload.taskId) {
+            currentTasks.delete(event.payload.agentId);
+          }
+        }
         response.writeHead(204).end();
         return;
       }
@@ -250,8 +341,14 @@ esac
         request.method === "POST" &&
         requestUrl.pathname === "/runner/interrupted"
       ) {
-        await requestBody(request);
-        state.interruptedReports += 1;
+        const text = await requestBody(request);
+        const body = text ? JSON.parse(text) : {};
+        state.interruptedReports.push(body);
+        if (body.agentId) {
+          currentTasks.delete(body.agentId);
+        } else {
+          currentTasks.clear();
+        }
         response.writeHead(204).end();
         return;
       }
@@ -279,6 +376,7 @@ esac
       TARGET_DIR: targetDirectory,
       CODEX_BIN: fakeCodex,
       FAKE_CODEX_LOG: invocationLog,
+      FAKE_CODEX_DIR: testDirectory,
       ROOM_ID,
       AGENTS: JSON.stringify(AGENTS),
       IMPORT_THREAD_ID: "",
@@ -298,20 +396,53 @@ esac
       runnerOutput.includes(`interrupt endpoint listening on :${interruptPort}`),
     );
 
-    await waitFor("two completed tasks and the third Codex invocation", async () => {
-      const events = state.eventBatches.flat();
-      const completed = events.filter(
-        (event) => event.type === "agent.turn_completed",
+    await waitFor("both agent lanes to overlap", async () => {
+      try {
+        await Promise.all([
+          access(turboOverlapStarted),
+          access(deepOverlapStarted),
+        ]);
+        return true;
+      } catch {
+        return false;
+      }
+    });
+    const overlappingCalls = parseCalls(await readFile(invocationLog, "utf8"));
+    assert.equal(overlappingCalls.length, 2);
+    assert(
+      overlappingCalls.every((call) => call.stdinClosed),
+      "Codex stdin must be EOF",
+    );
+    assert.equal(
+      state.eventBatches
+        .flat()
+        .filter((event) => event.type === "agent.turn_completed").length,
+      0,
+      "Both Codex children must spawn before either one completes",
+    );
+
+    await writeFile(overlapRelease, "release");
+    await waitFor("initial turns to complete and both next lanes to start", async () => {
+      const completedTaskIds = new Set(
+        state.eventBatches
+          .flat()
+          .filter((event) => event.type === "agent.turn_completed")
+          .map((event) => event.payload.taskId),
       );
       const calls = parseCalls(await readFile(invocationLog, "utf8"));
-      return completed.length === 2 && calls.length === 3;
+      return (
+        completedTaskIds.has("task-1") &&
+        completedTaskIds.has("task-2") &&
+        calls.length === 4
+      );
     });
 
     const calls = parseCalls(await readFile(invocationLog, "utf8"));
-    assert.equal(calls.length, 3);
+    assert.equal(calls.length, 4);
     assert(calls.every((call) => call.stdinClosed), "Codex stdin must be EOF");
 
-    assert.deepEqual(calls[0].args, [
+    const firstTurboCall = callFor(calls, "Sam", "Paint the room");
+    assert.deepEqual(firstTurboCall.args, [
       "exec",
       "--json",
       "-m",
@@ -323,7 +454,8 @@ esac
       targetDirectory,
       expectedPrompt("Sam", "Paint the room"),
     ]);
-    assert.deepEqual(calls[1].args, [
+    const firstDeepCall = callFor(calls, "Mina", "Add votes");
+    assert.deepEqual(firstDeepCall.args, [
       "exec",
       "--json",
       "-m",
@@ -335,7 +467,12 @@ esac
       targetDirectory,
       expectedPrompt("Mina", "Add votes"),
     ]);
-    assert.deepEqual(calls[2].args, [
+    const secondTurboCall = callFor(
+      calls,
+      "Lee",
+      "Keep running until interrupted",
+    );
+    assert.deepEqual(secondTurboCall.args, [
       "exec",
       "resume",
       "--json",
@@ -349,9 +486,24 @@ esac
       TURBO_THREAD_ID,
       expectedPrompt("Lee", "Keep running until interrupted"),
     ]);
-    assert(!calls[2].args.includes("--last"));
-    assert(!calls[2].args.includes("--sandbox"));
-    assert(!calls[2].args.includes("-C"));
+    assert(!secondTurboCall.args.includes("--last"));
+    assert(!secondTurboCall.args.includes("--sandbox"));
+    assert(!secondTurboCall.args.includes("-C"));
+    const secondDeepCall = callFor(calls, "Ari", "Finish and linger");
+    assert.deepEqual(secondDeepCall.args, [
+      "exec",
+      "resume",
+      "--json",
+      "-m",
+      DEEP_MODEL,
+      "--skip-git-repo-check",
+      "-c",
+      "sandbox_mode=danger-full-access",
+      "-c",
+      "approval_policy=never",
+      DEEP_THREAD_ID,
+      expectedPrompt("Ari", "Finish and linger"),
+    ]);
 
     await waitFor("buffered event from the still-running fake", () =>
       state.eventBatches
@@ -366,14 +518,18 @@ esac
 
     const interruptResponse = await fetch(
       `http://127.0.0.1:${interruptPort}/interrupt`,
-      { method: "POST" },
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ agentId: "turbo" }),
+      },
     );
     assert.equal(interruptResponse.status, 202);
     assert.deepEqual(await interruptResponse.json(), { interrupted: true });
 
     await waitFor(
       "interrupted report and polling after SIGKILL",
-      () => state.interruptedReports === 1 && state.nextTaskRequests >= 4,
+      () => state.interruptedReports.length === 1 && state.nextTaskRequests >= 4,
       5_000,
     );
     await waitFor("completed turn held open before process close", () =>
@@ -388,25 +544,110 @@ esac
 
     const completedInterruptResponse = await fetch(
       `http://127.0.0.1:${interruptPort}/runner/interrupt`,
-      { method: "POST" },
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ agentId: "deep" }),
+      },
     );
     assert.equal(completedInterruptResponse.status, 409);
     assert.deepEqual(await completedInterruptResponse.json(), {
       interrupted: false,
     });
     await wait(100);
-    assert.equal(
+    assert.deepEqual(
       state.interruptedReports,
-      1,
+      [{ agentId: "turbo" }],
       "A completed turn must not be reported as interrupted",
     );
+    await waitFor("the sibling lane to exit normally", async () => {
+      try {
+        await access(deepFinishedNormally);
+        return true;
+      } catch {
+        return false;
+      }
+    });
 
-    const callsAfterInterrupt = parseCalls(
-      await readFile(invocationLog, "utf8"),
+    await waitFor("both lanes to await a room-wide interrupt", async () => {
+      try {
+        await Promise.all([
+          access(turboAllInterruptStarted),
+          access(deepAllInterruptStarted),
+        ]);
+        return true;
+      } catch {
+        return false;
+      }
+    });
+    for (const malformedBody of [{}, { agent: "turbo" }]) {
+      const malformedResponse = await fetch(
+        `http://127.0.0.1:${interruptPort}/interrupt`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(malformedBody),
+        },
+      );
+      assert.equal(malformedResponse.status, 400);
+      assert.deepEqual(await malformedResponse.json(), {
+        interrupted: false,
+        error: "interrupt request body must include agentId",
+      });
+    }
+    await wait(100);
+    assert.deepEqual(
+      state.interruptedReports,
+      [{ agentId: "turbo" }],
+      "Malformed nonempty bodies must not kill or report active lanes",
     );
-    assert.equal(callsAfterInterrupt.length, 4);
-    assert(callsAfterInterrupt[3].stdinClosed);
-    assert.deepEqual(callsAfterInterrupt[3].args, [
+
+    const allInterruptResponse = await fetch(
+      `http://127.0.0.1:${interruptPort}/interrupt`,
+      { method: "POST" },
+    );
+    assert.equal(allInterruptResponse.status, 202);
+    assert.deepEqual(await allInterruptResponse.json(), { interrupted: true });
+    await waitFor(
+      "both room-wide interrupted lanes to be reported",
+      () => state.interruptedReports.length === 3,
+      5_000,
+    );
+    assert.deepEqual(
+      state.interruptedReports
+        .map((report) => report.agentId)
+        .sort(),
+      ["deep", "turbo", "turbo"],
+      "A bodyless interrupt must kill and report every running agent lane",
+    );
+
+    const allCalls = parseCalls(await readFile(invocationLog, "utf8"));
+    assert.equal(allCalls.length, 6);
+    const allTurboCall = callFor(
+      allCalls,
+      "Noa",
+      "Wait for room-wide interrupt turbo",
+    );
+    assert.deepEqual(allTurboCall.args, [
+      "exec",
+      "resume",
+      "--json",
+      "-m",
+      TURBO_MODEL,
+      "--skip-git-repo-check",
+      "-c",
+      "sandbox_mode=danger-full-access",
+      "-c",
+      "approval_policy=never",
+      TURBO_THREAD_ID,
+      expectedPrompt("Noa", "Wait for room-wide interrupt turbo"),
+    ]);
+    const allDeepCall = callFor(
+      allCalls,
+      "Noa",
+      "Wait for room-wide interrupt deep",
+    );
+    assert.deepEqual(allDeepCall.args, [
       "exec",
       "resume",
       "--json",
@@ -418,7 +659,7 @@ esac
       "-c",
       "approval_policy=never",
       DEEP_THREAD_ID,
-      expectedPrompt("Ari", "Finish and linger"),
+      expectedPrompt("Noa", "Wait for room-wide interrupt deep"),
     ]);
 
     const events = state.eventBatches.flat();
@@ -618,12 +859,18 @@ esac
             "crew.task_completed",
             "crew.task_failed",
             "crew.result_published",
-          ].includes(event.type) && event.payload.taskId === "task-3",
+          ].includes(event.type) &&
+          ["task-3", "task-5", "task-6"].includes(event.payload.taskId),
       ),
       false,
       "Interrupted tasks must not emit terminal task events",
     );
-    assert.equal(state.interruptedReports, 1);
+    assert.deepEqual(
+      state.interruptedReports
+        .map((report) => report.agentId)
+        .sort(),
+      ["deep", "turbo", "turbo"],
+    );
     assert.deepEqual(state.invalidKeys, []);
     assert.deepEqual(state.invalidRoomIds, []);
     assert.match(runnerOutput, /ignored malformed Codex JSONL/);
@@ -650,6 +897,9 @@ test("imports the first configured agent thread on that agent's first call", asy
   const fakeScript = String.raw`#!/bin/sh
 set -eu
 
+while ! mkdir "$FAKE_CODEX_LOG.lock" 2>/dev/null; do
+  /bin/sleep 0.01
+done
 {
   printf '%s\n' 'CALL'
   for arg in "$@"; do
@@ -661,6 +911,7 @@ set -eu
     printf 'STDIN\tclosed\n'
   fi
 } >> "$FAKE_CODEX_LOG"
+rmdir "$FAKE_CODEX_LOG.lock"
 
 last=''
 for arg in "$@"; do
@@ -716,6 +967,8 @@ esac
       model: TURBO_MODEL,
     },
   ];
+  const queuedTasks = [...tasks];
+  const currentTasks = new Map();
   const state = { eventBatches: [], badRequests: [] };
 
   const stubServer = createServer((request, response) => {
@@ -736,11 +989,16 @@ esac
         request.method === "GET" &&
         requestUrl.pathname === "/runner/next-task"
       ) {
-        const task = tasks.shift();
+        const taskIndex = queuedTasks.findIndex(
+          (task) => !currentTasks.has(task.agentId),
+        );
+        const task =
+          taskIndex === -1 ? undefined : queuedTasks.splice(taskIndex, 1)[0];
         if (!task) {
           response.writeHead(204).end();
           return;
         }
+        currentTasks.set(task.agentId, task);
         response.writeHead(200, { "content-type": "application/json" });
         response.end(JSON.stringify(task));
         return;
@@ -750,7 +1008,17 @@ esac
         request.method === "POST" &&
         requestUrl.pathname === "/runner/events"
       ) {
-        state.eventBatches.push(JSON.parse(await requestBody(request)));
+        const body = JSON.parse(await requestBody(request));
+        state.eventBatches.push(body);
+        for (const event of body) {
+          if (event.type !== "agent.turn_completed") {
+            continue;
+          }
+          const current = currentTasks.get(event.payload.agentId);
+          if (current?.taskId === event.payload.taskId) {
+            currentTasks.delete(event.payload.agentId);
+          }
+        }
         response.writeHead(204).end();
         return;
       }
@@ -806,7 +1074,8 @@ esac
 
     const calls = parseCalls(await readFile(invocationLog, "utf8"));
     assert(calls.every((call) => call.stdinClosed), "Codex stdin must be EOF");
-    assert.deepEqual(calls[0].args, [
+    const deepCall = callFor(calls, "Drew", "Deep starts first");
+    assert.deepEqual(deepCall.args, [
       "exec",
       "--json",
       "-m",
@@ -818,7 +1087,8 @@ esac
       targetDirectory,
       expectedPrompt("Drew", "Deep starts first"),
     ]);
-    assert.deepEqual(calls[1].args, [
+    const firstImportedCall = callFor(calls, "Tess", "Use imported memory");
+    assert.deepEqual(firstImportedCall.args, [
       "exec",
       "resume",
       "--json",
@@ -832,7 +1102,12 @@ esac
       importThreadId,
       expectedPrompt("Tess", "Use imported memory"),
     ]);
-    assert.deepEqual(calls[2].args, [
+    const continuedImportedCall = callFor(
+      calls,
+      "Tess",
+      "Continue imported work",
+    );
+    assert.deepEqual(continuedImportedCall.args, [
       "exec",
       "resume",
       "--json",
@@ -846,10 +1121,10 @@ esac
       capturedImportThreadId,
       expectedPrompt("Tess", "Continue imported work"),
     ]);
-    assert(!calls[1].args.includes("--sandbox"));
-    assert(!calls[1].args.includes("-C"));
-    assert(!calls[1].args.includes("--last"));
-    assert(!calls[0].args.includes(importThreadId));
+    assert(!firstImportedCall.args.includes("--sandbox"));
+    assert(!firstImportedCall.args.includes("-C"));
+    assert(!firstImportedCall.args.includes("--last"));
+    assert(!deepCall.args.includes(importThreadId));
 
     const events = state.eventBatches.flat();
     assert(

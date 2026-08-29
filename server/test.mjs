@@ -168,6 +168,13 @@ function eventInHistory(peer, type, payloadPredicate = () => true) {
   );
 }
 
+function runnerQueueSize(room) {
+  return [...room.runnerLanes.values()].reduce(
+    (total, lane) => total + lane.taskQueue.length,
+    0,
+  );
+}
+
 async function waitUntil(predicate, description, timeoutMs = REQUEST_TIMEOUT_MS) {
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
@@ -740,7 +747,7 @@ async function main() {
 
     const alphaState = app.ensembleState.rooms.get(alpha.roomId);
     const viewerEventCount = alphaState.events.length;
-    const viewerQueueCount = alphaState.taskQueue.length;
+    const viewerQueueCount = runnerQueueSize(alphaState);
     const viewerReflexCalls = reflex.steerCalls.length;
     const viewerInterruptCalls = interrupts.length;
     const blockedViewerMessages = [
@@ -760,7 +767,7 @@ async function main() {
     }
     await delay(20);
     assert.equal(alphaState.events.length, viewerEventCount);
-    assert.equal(alphaState.taskQueue.length, viewerQueueCount);
+    assert.equal(runnerQueueSize(alphaState), viewerQueueCount);
     assert.equal(reflex.steerCalls.length, viewerReflexCalls);
     assert.equal(interrupts.length, viewerInterruptCalls);
 
@@ -804,6 +811,13 @@ async function main() {
     );
     assert.equal(turboDispatch.payload.agentId, "turbo");
     assert.equal(turboDispatch.payload.byActorId, alice.welcome.actorId);
+
+    alice.peer.send({ type: "steer", text: "Turbo follow-up", agentId: "turbo" });
+    const turboFollowUpDispatch = await alice.peer.waitForEvent(
+      "crew.task_dispatched",
+      ({ text }) => text === "Turbo follow-up",
+    );
+    assert.equal(turboFollowUpDispatch.payload.agentId, "turbo");
 
     bob.peer.send({ type: "steer", text: "Deep gated", agentId: "deep" });
     const deepPost = await bob.peer.waitForEvent(
@@ -867,9 +881,15 @@ async function main() {
       kind: "agent",
     });
     assert.deepEqual(
-      alphaState.taskQueue.map(({ agentId }) => agentId),
-      ["turbo", "deep"],
-      "Reflex tasks must not enter the runner queue",
+      [...alphaState.runnerLanes.entries()].map(([agentId, lane]) => [
+        agentId,
+        lane.taskQueue.map(({ text }) => text),
+      ]),
+      [
+        ["turbo", ["Turbo default", "Turbo follow-up"]],
+        ["deep", ["Deep gated"]],
+      ],
+      "Runner tasks must queue FIFO in separate agent lanes",
     );
 
     response = await fetchPath(
@@ -906,11 +926,11 @@ async function main() {
       agentId: "turbo",
       model: BUILTIN_AGENTS.turbo.model,
     });
-    const turboStarted = await alice.peer.waitForEvent(
+    const firstTurboStarted = await alice.peer.waitForEvent(
       "agent.turn_started",
       ({ taskId }) => taskId === turboTask.taskId,
     );
-    assert.equal(turboStarted.payload.agentId, "turbo");
+    assert.equal(firstTurboStarted.payload.agentId, "turbo");
 
     response = await runnerFetch(
       `/runner/next-task?roomId=${encodeURIComponent(beta.roomId)}`,
@@ -923,7 +943,107 @@ async function main() {
     response = await runnerFetch(
       `/runner/next-task?roomId=${encodeURIComponent(alpha.roomId)}`,
     );
-    assert.equal(response.status, 204, "a room may only have one current runner task");
+    assert.equal(response.status, 200, "an idle agent lane may lease work concurrently");
+    const deepTask = await response.json();
+    assert.deepEqual(deepTask, {
+      taskId: deepDispatch.payload.taskId,
+      text: "Deep gated",
+      authorName: "Bob",
+      agentId: "deep",
+      model: BUILTIN_AGENTS.deep.model,
+    });
+    const firstDeepStarted = await alice.peer.waitForEvent(
+      "agent.turn_started",
+      ({ taskId }) => taskId === deepTask.taskId,
+    );
+    assert.equal(firstDeepStarted.payload.agentId, "deep");
+    assert.ok(firstTurboStarted.seq < firstDeepStarted.seq);
+
+    response = await runnerFetch(
+      `/runner/next-task?roomId=${encodeURIComponent(alpha.roomId)}`,
+    );
+    assert.equal(
+      response.status,
+      204,
+      "queued work on a busy lane is not eligible while every other lane is busy",
+    );
+
+    response = await runnerFetch(
+      `/runner/interrupted?roomId=${encodeURIComponent(alpha.roomId)}`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ agentId: "fable" }),
+      },
+    );
+    assert.equal(response.status, 400, "only runner agent lanes may be interrupted");
+
+    response = await runnerFetch(
+      `/runner/interrupted?roomId=${encodeURIComponent(alpha.roomId)}`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ agentId: "deep" }),
+      },
+    );
+    assert.equal(response.status, 204);
+    assert.equal(alphaState.runnerLanes.get("turbo").currentTask?.taskId, turboTask.taskId);
+    assert.equal(alphaState.runnerLanes.get("deep").currentTask, null);
+    assert.equal(alphaState.runnerLanes.get("deep").taskQueue[0]?.taskId, deepTask.taskId);
+
+    response = await runnerFetch(
+      `/runner/next-task?roomId=${encodeURIComponent(alpha.roomId)}`,
+    );
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), deepTask, "only the interrupted lane is requeued");
+    await alice.peer.waitForEvent(
+      "agent.turn_started",
+      ({ taskId }) => taskId === deepTask.taskId,
+    );
+
+    response = await runnerFetch(
+      `/runner/interrupted?roomId=${encodeURIComponent(alpha.roomId)}`,
+      { method: "POST" },
+    );
+    assert.equal(response.status, 204);
+    assert.equal(alphaState.runnerLanes.get("turbo").currentTask, null);
+    assert.equal(alphaState.runnerLanes.get("deep").currentTask, null);
+    assert.equal(alphaState.runnerLanes.get("turbo").taskQueue[0]?.taskId, turboTask.taskId);
+    assert.equal(alphaState.runnerLanes.get("deep").taskQueue[0]?.taskId, deepTask.taskId);
+
+    response = await runnerFetch(
+      `/runner/next-task?roomId=${encodeURIComponent(alpha.roomId)}`,
+    );
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), turboTask);
+    const concurrentTurboStarted = await alice.peer.waitForEvent(
+      "agent.turn_started",
+      ({ taskId }) => taskId === turboTask.taskId,
+    );
+    response = await runnerFetch(
+      `/runner/next-task?roomId=${encodeURIComponent(alpha.roomId)}`,
+    );
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), deepTask);
+    const concurrentDeepStarted = await alice.peer.waitForEvent(
+      "agent.turn_started",
+      ({ taskId }) => taskId === deepTask.taskId,
+    );
+    assert.ok(concurrentTurboStarted.seq < concurrentDeepStarted.seq);
+
+    const beforeAmbiguousEvent = alphaState.events.length;
+    response = await runnerFetch(
+      `/runner/events?roomId=${encodeURIComponent(alpha.roomId)}`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify([
+          { type: "agent.message", payload: { text: "AMBIGUOUS_SENTINEL" } },
+        ]),
+      },
+    );
+    assert.equal(response.status, 400, "taskless events need agentId with concurrent lanes");
+    assert.equal(alphaState.events.length, beforeAmbiguousEvent);
 
     const beforeAtomicBatch = alphaState.events.length;
     response = await runnerFetch(
@@ -932,7 +1052,10 @@ async function main() {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify([
-          { type: "agent.message", payload: { text: "ATOMIC_SENTINEL" } },
+          {
+            type: "agent.message",
+            payload: { text: "ATOMIC_SENTINEL", agentId: "turbo" },
+          },
           { type: "agent.command", payload: {} },
         ]),
       },
@@ -980,23 +1103,7 @@ async function main() {
             seq: -1,
             actor: spoofActor,
             type: "agent.message",
-            payload: { text: "Turbo shipped" },
-          },
-          {
-            type: "agent.turn_completed",
-            payload: { taskId: turboTask.taskId, tokens: 100, costUsd: 0.0003 },
-          },
-          {
-            type: "crew.result_published",
-            payload: {
-              taskId: turboTask.taskId,
-              summary: "Turbo result",
-              diffStat: "2 files changed",
-            },
-          },
-          {
-            type: "crew.task_completed",
-            payload: { taskId: turboTask.taskId, tokens: 100, costUsd: 0.0003 },
+            payload: { text: "Turbo shipped", agentId: "turbo" },
           },
         ]),
       },
@@ -1016,36 +1123,6 @@ async function main() {
       name: "Codex Turbo",
       kind: "agent",
     });
-    const turboCompleted = await alice.peer.waitForEvent(
-      "agent.turn_completed",
-      ({ taskId }) => taskId === turboTask.taskId,
-    );
-    assert.equal(turboCompleted.payload.agentId, "turbo");
-
-    response = await runnerFetch(
-      `/runner/next-task?roomId=${encodeURIComponent(alpha.roomId)}`,
-    );
-    assert.equal(response.status, 200);
-    const deepTask = await response.json();
-    assert.deepEqual(deepTask, {
-      taskId: deepDispatch.payload.taskId,
-      text: "Deep gated",
-      authorName: "Bob",
-      agentId: "deep",
-      model: BUILTIN_AGENTS.deep.model,
-    });
-
-    response = await runnerFetch(
-      `/runner/interrupted?roomId=${encodeURIComponent(alpha.roomId)}`,
-      { method: "POST" },
-    );
-    assert.equal(response.status, 204);
-    assert.equal(alphaState.currentTask, null);
-    response = await runnerFetch(
-      `/runner/next-task?roomId=${encodeURIComponent(alpha.roomId)}`,
-    );
-    assert.equal(response.status, 200);
-    assert.deepEqual(await response.json(), deepTask, "interrupted task must be requeued");
 
     response = await runnerFetch(
       `/runner/events?roomId=${encodeURIComponent(alpha.roomId)}`,
@@ -1057,6 +1134,120 @@ async function main() {
             type: "agent.message",
             payload: { text: "Deep resumed", agentId: "deep" },
           },
+        ]),
+      },
+    );
+    assert.equal(response.status, 200);
+    const deepMessage = await alice.peer.waitForEvent(
+      "agent.message",
+      ({ text }) => text === "Deep resumed",
+    );
+    assert.equal(deepMessage.payload.agentId, "deep");
+    assert.deepEqual(deepMessage.actor, {
+      id: "act_deep",
+      name: "Codex Deep",
+      kind: "agent",
+    });
+
+    response = await runnerFetch(
+      `/runner/events?roomId=${encodeURIComponent(alpha.roomId)}`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify([
+          {
+            type: "agent.turn_completed",
+            payload: {
+              taskId: turboTask.taskId,
+              tokens: 100,
+              costUsd: 0.0003,
+              agentId: "turbo",
+            },
+          },
+          {
+            type: "crew.result_published",
+            payload: {
+              taskId: turboTask.taskId,
+              summary: "Turbo result",
+              diffStat: "2 files changed",
+              agentId: "turbo",
+            },
+          },
+          {
+            type: "crew.task_completed",
+            payload: {
+              taskId: turboTask.taskId,
+              tokens: 100,
+              costUsd: 0.0003,
+              agentId: "turbo",
+            },
+          },
+        ]),
+      },
+    );
+    assert.equal(response.status, 200);
+    const turboCompleted = await alice.peer.waitForEvent(
+      "agent.turn_completed",
+      ({ taskId }) => taskId === turboTask.taskId,
+    );
+    assert.equal(turboCompleted.payload.agentId, "turbo");
+    assert.ok(turboMessage.seq < deepMessage.seq && deepMessage.seq < turboCompleted.seq);
+    assert.equal(alphaState.runnerLanes.get("turbo").currentTask, null);
+    assert.equal(alphaState.runnerLanes.get("deep").currentTask?.taskId, deepTask.taskId);
+
+    response = await runnerFetch(
+      `/runner/next-task?roomId=${encodeURIComponent(alpha.roomId)}`,
+    );
+    assert.equal(response.status, 200);
+    const turboFollowUpTask = await response.json();
+    assert.deepEqual(turboFollowUpTask, {
+      taskId: turboFollowUpDispatch.payload.taskId,
+      text: "Turbo follow-up",
+      authorName: "Alice",
+      agentId: "turbo",
+      model: BUILTIN_AGENTS.turbo.model,
+    });
+    await alice.peer.waitForEvent(
+      "agent.turn_started",
+      ({ taskId }) => taskId === turboFollowUpTask.taskId,
+    );
+    assert.equal(alphaState.runnerLanes.get("deep").currentTask?.taskId, deepTask.taskId);
+
+    response = await runnerFetch(
+      `/runner/events?roomId=${encodeURIComponent(alpha.roomId)}`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify([
+          {
+            type: "agent.turn_completed",
+            payload: {
+              taskId: turboFollowUpTask.taskId,
+              tokens: 0,
+              costUsd: 0,
+              agentId: "turbo",
+            },
+          },
+          {
+            type: "crew.task_completed",
+            payload: {
+              taskId: turboFollowUpTask.taskId,
+              tokens: 0,
+              costUsd: 0,
+              agentId: "turbo",
+            },
+          },
+        ]),
+      },
+    );
+    assert.equal(response.status, 200);
+
+    response = await runnerFetch(
+      `/runner/events?roomId=${encodeURIComponent(alpha.roomId)}`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify([
           {
             type: "agent.turn_completed",
             payload: {
@@ -1088,16 +1279,14 @@ async function main() {
       },
     );
     assert.equal(response.status, 200);
-    const deepMessage = await alice.peer.waitForEvent(
-      "agent.message",
-      ({ text }) => text === "Deep resumed",
+    const deepCompleted = await alice.peer.waitForEvent(
+      "agent.turn_completed",
+      ({ taskId }) => taskId === deepTask.taskId,
     );
-    assert.equal(deepMessage.payload.agentId, "deep");
-    assert.deepEqual(deepMessage.actor, {
-      id: "act_deep",
-      name: "Codex Deep",
-      kind: "agent",
-    });
+    assert.equal(deepCompleted.payload.agentId, "deep");
+    assert.ok(turboCompleted.seq < deepCompleted.seq);
+    assert.equal(alphaState.runnerLanes.get("turbo").currentTask, null);
+    assert.equal(alphaState.runnerLanes.get("deep").currentTask, null);
 
     response = await runnerFetch(
       `/runner/events?roomId=${encodeURIComponent(beta.roomId)}`,
@@ -1146,7 +1335,7 @@ async function main() {
     assert.deepEqual(aliceRow, {
       actorId: alice.welcome.actorId,
       name: "Alice",
-      steers: 2,
+      steers: 3,
       tokens: 107,
       costUsd: 0.000321,
       outcomes: ["Reflex result", "Turbo result"],

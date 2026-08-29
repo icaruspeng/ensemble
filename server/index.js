@@ -476,6 +476,7 @@ export async function buildServer(options = {}) {
     workspace,
     pinned = false,
   }) {
+    const roomAgents = agents.map(cloneAgent);
     return {
       roomId,
       name,
@@ -483,7 +484,7 @@ export async function buildServer(options = {}) {
       createdAt: Date.now(),
       ...(repoUrl ? { repoUrl } : {}),
       ...(importThreadId ? { importThreadId } : {}),
-      agents: agents.map(cloneAgent),
+      agents: roomAgents,
       invites: invites ?? { steer: newInviteToken(), view: newInviteToken() },
       workspace: workspace ?? { status: "provisioning" },
       pinned,
@@ -493,8 +494,11 @@ export async function buildServer(options = {}) {
       clients: new Set(),
       actors: new Map(),
       driverActorId: null,
-      taskQueue: [],
-      currentTask: null,
+      runnerLanes: new Map(
+        roomAgents
+          .filter(({ engine }) => engine === "runner")
+          .map(({ agentId }) => [agentId, { taskQueue: [], currentTask: null }]),
+      ),
       tasks: new Map(),
       gates: new Map(),
       comments: new Map(),
@@ -650,7 +654,8 @@ export async function buildServer(options = {}) {
       task
     ) {
       task.status = event.type === "crew.task_completed" ? "completed" : "failed";
-      if (room.currentTask?.taskId === task.taskId) room.currentTask = null;
+      const lane = room.runnerLanes.get(task.agentId);
+      if (lane?.currentTask?.taskId === task.taskId) lane.currentTask = null;
     }
   }
 
@@ -850,12 +855,13 @@ export async function buildServer(options = {}) {
       sendProtocolError(client, "Only the driver or the author can remove a task");
       return;
     }
-    const queueIndex = room.taskQueue.indexOf(task);
+    const taskQueue = room.runnerLanes.get(task.agentId)?.taskQueue;
+    const queueIndex = taskQueue?.indexOf(task) ?? -1;
     if (queueIndex === -1 || task.status !== "queued") {
       sendProtocolError(client, "That task is already running or finished");
       return;
     }
-    room.taskQueue.splice(queueIndex, 1);
+    taskQueue.splice(queueIndex, 1);
     task.status = "failed";
     emit(room, "crew.task_failed", client.actor, {
       taskId: task.taskId,
@@ -880,8 +886,18 @@ export async function buildServer(options = {}) {
       byActorId: task.author.id,
       agentId: task.agentId,
     });
-    if (agent.engine === "runner") room.taskQueue.push(task);
-    else {
+    if (agent.engine === "runner") {
+      const lane = room.runnerLanes.get(agent.agentId);
+      if (!lane) {
+        task.status = "failed";
+        emit(room, "crew.task_failed", SYSTEM_ACTOR, {
+          taskId: task.taskId,
+          reason: "The selected agent runner lane is unavailable",
+        });
+        return;
+      }
+      lane.taskQueue.push(task);
+    } else {
       const previous = room.reflexDispatchChains.get(agent.agentId) ?? Promise.resolve();
       const dispatch = previous.then(() =>
         dispatchReflexTask(room, task, agent.agentId),
@@ -1224,17 +1240,30 @@ export async function buildServer(options = {}) {
   }
 
   function resolveRunnerAgentId(room, payload, queryAgentId) {
-    const declared =
-      asNonemptyString(payload.agentId) ?? asNonemptyString(queryAgentId) ?? null;
+    const payloadAgentId = asNonemptyString(payload.agentId);
+    const requestedAgentId = asNonemptyString(queryAgentId);
+    if (payloadAgentId && requestedAgentId && payloadAgentId !== requestedAgentId) {
+      return null;
+    }
+    const declared = payloadAgentId ?? requestedAgentId ?? null;
     const task =
       typeof payload.taskId === "string" ? room.tasks.get(payload.taskId) ?? null : null;
-    const assigned = task?.agentId ?? (!declared ? room.currentTask?.agentId : null) ?? null;
+    const runningAgentIds = !declared
+      ? [...room.runnerLanes.entries()]
+          .filter(([, lane]) => lane.currentTask)
+          .map(([agentId]) => agentId)
+      : [];
+    const assigned =
+      task?.agentId ?? (runningAgentIds.length === 1 ? runningAgentIds[0] : null);
     if (declared && assigned && declared !== assigned) return null;
+    if (!declared && !task && runningAgentIds.length > 1) return null;
+    const runnerAgentIds = room.agents
+      .filter(({ engine }) => engine === "runner")
+      .map(({ agentId }) => agentId);
     const agentId =
       assigned ??
       declared ??
-      room.agents.find(({ engine }) => engine === "runner")?.agentId ??
-      null;
+      (runnerAgentIds.length === 1 ? runnerAgentIds[0] : null);
     const agent = agentId ? findAgent(room, agentId) : null;
     return agent?.engine === "runner" ? agentId : null;
   }
@@ -1245,28 +1274,34 @@ export async function buildServer(options = {}) {
     async (request, reply) => {
       const room = runnerRoom(request, reply);
       if (!room) return reply;
-      if (room.currentTask) return reply.code(204).send();
-      let task = room.taskQueue.shift();
-      while (task && task.status !== "queued") task = room.taskQueue.shift();
-      if (!task) return reply.code(204).send();
-      const agent = findAgent(room, task.agentId);
-      if (!agent || agent.engine !== "runner") {
-        task.status = "failed";
-        return reply.code(204).send();
+      for (const agent of room.agents) {
+        if (agent.engine !== "runner") continue;
+        const lane = room.runnerLanes.get(agent.agentId);
+        if (!lane || lane.currentTask) continue;
+
+        let task = lane.taskQueue.shift();
+        while (task && task.status !== "queued") task = lane.taskQueue.shift();
+        if (!task) continue;
+        if (task.agentId !== agent.agentId) {
+          task.status = "failed";
+          continue;
+        }
+
+        task.status = "started";
+        lane.currentTask = task;
+        emit(room, "agent.turn_started", agentActor(agent), {
+          taskId: task.taskId,
+          agentId: task.agentId,
+        });
+        return {
+          taskId: task.taskId,
+          text: task.text,
+          authorName: task.authorName,
+          agentId: task.agentId,
+          model: agent.model,
+        };
       }
-      task.status = "started";
-      room.currentTask = task;
-      emit(room, "agent.turn_started", agentActor(agent), {
-        taskId: task.taskId,
-        agentId: task.agentId,
-      });
-      return {
-        taskId: task.taskId,
-        text: task.text,
-        authorName: task.authorName,
-        agentId: task.agentId,
-        model: agent.model,
-      };
+      return reply.code(204).send();
     },
   );
 
@@ -1324,10 +1359,30 @@ export async function buildServer(options = {}) {
     async (request, reply) => {
       const room = runnerRoom(request, reply);
       if (!room) return reply;
-      if (room.currentTask) {
-        room.currentTask.status = "queued";
-        room.taskQueue.unshift(room.currentTask);
-        room.currentTask = null;
+
+      let lanes;
+      if (request.body === undefined || request.body === null) {
+        lanes = [...room.runnerLanes.values()];
+      } else {
+        if (!isObject(request.body)) {
+          return reply.code(400).send({ error: "body must be an object" });
+        }
+        const agentId = asNonemptyString(request.body.agentId);
+        if (!agentId) {
+          return reply.code(400).send({ error: "agentId is required when a body is sent" });
+        }
+        const lane = room.runnerLanes.get(agentId);
+        if (!lane) {
+          return reply.code(400).send({ error: "invalid runner agentId" });
+        }
+        lanes = [lane];
+      }
+
+      for (const lane of lanes) {
+        if (!lane.currentTask) continue;
+        lane.currentTask.status = "queued";
+        lane.taskQueue.unshift(lane.currentTask);
+        lane.currentTask = null;
       }
       return reply.code(204).send();
     },

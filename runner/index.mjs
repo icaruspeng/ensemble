@@ -97,8 +97,9 @@ const threadIds = new Map();
 if (IMPORT_THREAD_ID) {
   threadIds.set(AGENTS[0].agentId, IMPORT_THREAD_ID);
 }
-let activeRun;
+const activeRuns = new Map();
 let stopping = false;
+let wakePolling;
 
 const sleep = (milliseconds) =>
   new Promise((resolveSleep) => setTimeout(resolveSleep, milliseconds));
@@ -129,13 +130,6 @@ async function postJson(path, body) {
     body: JSON.stringify(body),
   });
 
-  if (!response.ok) {
-    throw new Error(`${path} returned HTTP ${response.status}`);
-  }
-}
-
-async function postWithoutBody(path) {
-  const response = await apiFetch(path, { method: "POST" });
   if (!response.ok) {
     throw new Error(`${path} returned HTTP ${response.status}`);
   }
@@ -570,58 +564,67 @@ async function runTask(task) {
     announcedCommands: new Set(),
     reportedUnknownItems: new Set(),
   };
-  activeRun = run;
-
-  const prompt = promptFor(task);
-  const child = spawn(CODEX_BIN, codexArguments(task, prompt), {
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  run.child = child;
-
-  const lines = createInterface({ input: child.stdout, crlfDelay: Infinity });
-  const linesClosed = new Promise((resolveLines) => lines.once("close", resolveLines));
-
-  lines.on("line", (line) => {
-    if (!line.trim()) {
-      return;
-    }
-
-    try {
-      handleCodexEvent(run, JSON.parse(line));
-    } catch (error) {
-      console.error(`[runner] ignored malformed Codex JSONL: ${error.message}`);
-    }
-  });
-
-  child.stderr.on("data", (chunk) => {
-    run.stderr = `${run.stderr}${chunk}`.slice(-4_000);
-  });
-
-  const result = await new Promise((resolveResult) => {
-    let settled = false;
-    const settle = (value) => {
-      if (!settled) {
-        settled = true;
-        resolveResult(value);
-      }
-    };
-
-    child.once("error", (error) => settle({ error }));
-    child.once("close", (code, signal) => settle({ code, signal }));
-  });
-
-  await linesClosed;
-
-  if (!run.interrupted && !run.terminalSeen) {
-    queueRunEvent(run, "crew.task_failed", {
-      taskId: task.taskId,
-      reason: taskFailureReason(run, result),
-    });
+  if (activeRuns.has(task.agentId)) {
+    throw new Error(`agent ${task.agentId} already has an active task`);
   }
+  activeRuns.set(task.agentId, run);
 
-  await eventBuffer.drain();
-  if (activeRun === run) {
-    activeRun = undefined;
+  try {
+    const prompt = promptFor(task);
+    const child = spawn(CODEX_BIN, codexArguments(task, prompt), {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    run.child = child;
+
+    const lines = createInterface({ input: child.stdout, crlfDelay: Infinity });
+    const linesClosed = new Promise((resolveLines) =>
+      lines.once("close", resolveLines),
+    );
+
+    lines.on("line", (line) => {
+      if (!line.trim()) {
+        return;
+      }
+
+      try {
+        handleCodexEvent(run, JSON.parse(line));
+      } catch (error) {
+        console.error(`[runner] ignored malformed Codex JSONL: ${error.message}`);
+      }
+    });
+
+    child.stderr.on("data", (chunk) => {
+      run.stderr = `${run.stderr}${chunk}`.slice(-4_000);
+    });
+
+    const result = await new Promise((resolveResult) => {
+      let settled = false;
+      const settle = (value) => {
+        if (!settled) {
+          settled = true;
+          resolveResult(value);
+        }
+      };
+
+      child.once("error", (error) => settle({ error }));
+      child.once("close", (code, signal) => settle({ code, signal }));
+    });
+
+    await linesClosed;
+
+    if (!run.interrupted && !run.terminalSeen) {
+      queueRunEvent(run, "crew.task_failed", {
+        taskId: task.taskId,
+        reason: taskFailureReason(run, result),
+      });
+    }
+
+    await eventBuffer.drain();
+  } finally {
+    if (activeRuns.get(task.agentId) === run) {
+      activeRuns.delete(task.agentId);
+    }
+    wakeWakeablePoll();
   }
 }
 
@@ -655,12 +658,65 @@ async function nextTask() {
   return { ...task, model: taskModel };
 }
 
+function wakeWakeablePoll() {
+  wakePolling?.();
+}
+
+async function waitForPoll() {
+  await new Promise((resolveWait) => {
+    let settled = false;
+    const finish = () => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timer);
+      if (wakePolling === finish) {
+        wakePolling = undefined;
+      }
+      resolveWait();
+    };
+    const timer = setTimeout(finish, POLL_INTERVAL_MS);
+    wakePolling = finish;
+  });
+}
+
+function launchTask(task) {
+  void runTask(task).catch((error) => {
+    if (!stopping) {
+      console.error(
+        `[runner] task ${task.taskId} for ${task.agentId} failed: ${error.message}`,
+      );
+    }
+  });
+}
+
+async function requeueUnexpectedBusyLane(task) {
+  try {
+    await postJson(INTERRUPTED_PATH, { agentId: task.agentId });
+  } catch (error) {
+    console.error(
+      `[runner] could not requeue task ${task.taskId} for busy agent ${task.agentId}: ${error.message}`,
+    );
+  }
+}
+
 async function poll() {
   while (!stopping) {
     try {
-      const task = await nextTask();
-      if (task) {
-        await runTask(task);
+      while (!stopping && activeRuns.size < AGENTS.length) {
+        const task = await nextTask();
+        if (!task) {
+          break;
+        }
+        if (activeRuns.has(task.agentId)) {
+          console.error(
+            `[runner] refused a second active task for agent ${task.agentId}`,
+          );
+          await requeueUnexpectedBusyLane(task);
+          break;
+        }
+        launchTask(task);
       }
     } catch (error) {
       if (!stopping) {
@@ -669,7 +725,7 @@ async function poll() {
     }
 
     if (!stopping) {
-      await sleep(POLL_INTERVAL_MS);
+      await waitForPoll();
     }
   }
 }
@@ -682,7 +738,7 @@ async function reportInterrupted(run) {
   let lastError;
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
-      await postWithoutBody(INTERRUPTED_PATH);
+      await postJson(INTERRUPTED_PATH, { agentId: run.task.agentId });
       run.interruptReported = true;
       return true;
     } catch (error) {
@@ -703,30 +759,57 @@ async function keepReportingInterrupted(run) {
   }
 }
 
-const interruptServer = createServer(async (request, response) => {
-  request.resume();
-
-  if (
-    request.method !== "POST" ||
-    !["/interrupt", "/runner/interrupt"].includes(request.url)
-  ) {
-    response.writeHead(404).end();
-    return;
+async function interruptAgentIdFrom(request) {
+  const chunks = [];
+  let size = 0;
+  for await (const chunk of request) {
+    size += chunk.length;
+    if (size > 16_384) {
+      throw new Error("interrupt request body is too large");
+    }
+    chunks.push(chunk);
   }
 
-  const run = activeRun;
-  if (
-    !run?.child ||
-    run.child.exitCode !== null ||
-    run.child.signalCode !== null ||
-    run.terminalSeen ||
-    run.interrupted
-  ) {
-    response.writeHead(409, { "content-type": "application/json" });
-    response.end(JSON.stringify({ interrupted: false }));
-    return;
+  const text = Buffer.concat(chunks).toString("utf8").trim();
+  if (!text) {
+    return undefined;
   }
 
+  let body;
+  try {
+    body = JSON.parse(text);
+  } catch {
+    throw new Error("interrupt request body must be valid JSON");
+  }
+
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    throw new Error("interrupt request body must be an object");
+  }
+  if (body.agentId === undefined) {
+    throw new Error("interrupt request body must include agentId");
+  }
+  if (typeof body.agentId !== "string" || !body.agentId.trim()) {
+    throw new Error("interrupt agentId must be a nonempty string");
+  }
+
+  const agentId = body.agentId.trim();
+  if (!AGENTS_BY_ID.has(agentId)) {
+    throw new Error(`unknown runner agent: ${agentId}`);
+  }
+  return agentId;
+}
+
+function canInterrupt(run) {
+  return Boolean(
+    run?.child &&
+      run.child.exitCode === null &&
+      run.child.signalCode === null &&
+      !run.terminalSeen &&
+      !run.interrupted,
+  );
+}
+
+function killRun(run) {
   run.interrupted = true;
   let signalAccepted = false;
   try {
@@ -734,25 +817,74 @@ const interruptServer = createServer(async (request, response) => {
   } catch {
     signalAccepted = false;
   }
-
   if (!signalAccepted) {
     run.interrupted = false;
-    response.writeHead(409, { "content-type": "application/json" });
-    response.end(JSON.stringify({ interrupted: false }));
-    return;
   }
+  return signalAccepted;
+}
 
-  const reported = await reportInterrupted(run);
-  if (reported) {
-    response.writeHead(202, { "content-type": "application/json" });
-    response.end(JSON.stringify({ interrupted: true }));
-  } else {
-    console.error(
-      `[runner] interrupt report failed: ${run.interruptReportError?.message}`,
+function jsonResponse(response, status, body) {
+  response.writeHead(status, { "content-type": "application/json" });
+  response.end(JSON.stringify(body));
+}
+
+const interruptServer = createServer(async (request, response) => {
+  try {
+    const { pathname } = new URL(request.url, "http://runner.local");
+    if (
+      request.method !== "POST" ||
+      !["/interrupt", "/runner/interrupt"].includes(pathname)
+    ) {
+      request.resume();
+      response.writeHead(404).end();
+      return;
+    }
+
+    let agentId;
+    try {
+      agentId = await interruptAgentIdFrom(request);
+    } catch (error) {
+      jsonResponse(response, 400, {
+        interrupted: false,
+        error: error.message,
+      });
+      return;
+    }
+
+    const candidates = agentId
+      ? [activeRuns.get(agentId)].filter(Boolean)
+      : [...activeRuns.values()];
+    const interruptedRuns = candidates.filter(canInterrupt).filter(killRun);
+    if (interruptedRuns.length === 0) {
+      jsonResponse(response, 409, { interrupted: false });
+      return;
+    }
+
+    const reportResults = await Promise.all(
+      interruptedRuns.map((run) => reportInterrupted(run)),
     );
-    void keepReportingInterrupted(run);
-    response.writeHead(502, { "content-type": "application/json" });
-    response.end(JSON.stringify({ interrupted: true, reported: false }));
+    if (reportResults.every(Boolean)) {
+      jsonResponse(response, 202, { interrupted: true });
+      return;
+    }
+
+    for (const [index, reported] of reportResults.entries()) {
+      if (!reported) {
+        const run = interruptedRuns[index];
+        console.error(
+          `[runner] interrupt report failed for ${run.task.agentId}: ${run.interruptReportError?.message}`,
+        );
+        void keepReportingInterrupted(run);
+      }
+    }
+    jsonResponse(response, 502, { interrupted: true, reported: false });
+  } catch (error) {
+    console.error(`[runner] interrupt request failed: ${error.message}`);
+    if (!response.headersSent) {
+      jsonResponse(response, 500, { interrupted: false });
+    } else {
+      response.end();
+    }
   }
 });
 
@@ -760,9 +892,11 @@ interruptServer.on("error", (error) => {
   console.error(`[runner] interrupt server failed: ${error.message}`);
   stopping = true;
   eventBuffer.stop();
-  if (activeRun?.child && activeRun.child.exitCode === null) {
-    activeRun.interrupted = true;
-    activeRun.child.kill("SIGKILL");
+  for (const run of activeRuns.values()) {
+    if (run.child && run.child.exitCode === null) {
+      run.interrupted = true;
+      run.child.kill("SIGKILL");
+    }
   }
   process.exit(1);
 });
@@ -781,11 +915,14 @@ async function shutdown() {
   }
   stopping = true;
   eventBuffer.stop();
+  wakeWakeablePoll();
 
-  const child = activeRun?.child;
-  if (child && child.exitCode === null) {
-    activeRun.interrupted = true;
-    child.kill("SIGKILL");
+  for (const run of activeRuns.values()) {
+    const { child } = run;
+    if (child && child.exitCode === null) {
+      run.interrupted = true;
+      child.kill("SIGKILL");
+    }
   }
 
   interruptServer.close(() => process.exit(0));
