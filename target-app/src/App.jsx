@@ -35,10 +35,16 @@ export default function App() {
   }, [notes]);
 
   const addNote = () => {
+    let author = localStorage.getItem("roomboard-author") || "";
+    if (!author) {
+      author = (window.prompt("Sign your notes — what's your name?") || "").trim();
+      if (author) localStorage.setItem("roomboard-author", author);
+    }
     const note = {
       id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
       text: "",
       votes: 0,
+      author: author || "anonymous",
       color: NOTE_COLORS[notes.length % NOTE_COLORS.length],
     };
     setNotes((prev) => [...prev, note]);
@@ -85,6 +91,7 @@ export default function App() {
               onChange={(event) => updateNote(note.id, event.target.value)}
             />
             <div className="note-actions">
+              <span className="note-author">{note.author || "anonymous"}</span>
               <button type="button" className="note-vote" onClick={() => voteNote(note.id)}>
                 ▲ {note.votes}
               </button>

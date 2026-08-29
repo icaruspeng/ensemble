@@ -174,3 +174,4 @@ body.theme-dark {
 .note-remove:hover { opacity: 1; }
 .note-add { position: fixed; right: 26px; bottom: 74px; width: 56px; height: 56px; border-radius: 50%; border: none; background: #ffd43b; font-size: 28px; cursor: pointer; box-shadow: 0 8px 20px rgba(0,0,0,0.25); }
 .theme-dark .note-text { color: #222; }
+.note-author { font-size: 10px; letter-spacing: 0.04em; opacity: 0.55; text-transform: lowercase; margin-right: auto; }

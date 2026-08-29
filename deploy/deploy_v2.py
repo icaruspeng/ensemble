@@ -129,6 +129,7 @@ def main():
         f"PUBLIC_URL={hub_url} "
         f"DEMO_ROOM=1 DEMO_WORKSPACE_JSON=\"{demo_ws_json}\" "
         f"DEMO_STEER_TOKEN=crew DEMO_VIEW_TOKEN=watch "
+        f"OPEN_STEERING=1 "
     )
     if reflex_cfg.get("apiKey"):
         env += f"REFLEX_API_KEY={reflex_cfg['apiKey']} REFLEX_ORG={reflex_cfg.get('organizationId','')} "

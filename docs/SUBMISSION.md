@@ -12,6 +12,6 @@ AI is still single-player: every agent session is a chat box only one person can
 - **Runloop** — a devbox per task, provisioned on demand in ~25 seconds (agent mount, repo clone, live preview tunnel); snapshots as reset/recovery; suspend economics.
 - **Reflex** — our session protocol implements Reflex's published-but-unshipped `crew.*` event grammar (actor_post, gate_requested/resolved, task_dispatched, result_published) — the multiplayer layer their schema promises; Claude-family agents run through reflex.runloop.ai with credentials we registered via their API.
 
-**Live demo:** <HUB_URL> (demo room: /s/demo?k=crew to steer, ?k=watch to view)
+**Live demo:** https://8080-f9w4pzauk6433yq0cmv3aadel2lzrl31gfi22xlcmx8grvoxgf3.tunnel.runloop.ai (demo room: /s/demo?k=crew to steer, ?k=watch to view)
 **Repo:** https://github.com/icaruspeng/ensemble
 **Team:** Roy (icaruspeng) — with Claude orchestrating and Codex building.
