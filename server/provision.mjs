@@ -3,7 +3,7 @@ import { setTimeout as delay } from "node:timers/promises";
 
 const DEFAULT_API_BASE_URL = "https://api.runloop.ai/v1";
 const DEFAULT_MAX_LIVE_WORKSPACES = 2;
-const DEFAULT_REQUEST_TIMEOUT_MS = 40_000;
+const DEFAULT_REQUEST_TIMEOUT_MS = 90_000;
 const DEFAULT_HEALTH_ATTEMPTS = 30;
 const DEFAULT_SUSPEND_WAIT_ATTEMPTS = 1;
 const DEFAULT_CLOSE_SUSPEND_TIMEOUT_MS = 5_000;
