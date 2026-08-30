@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { JellyButtonContent } from "./JellyButtonContent";
 import "./home.css";
 
 type AgentId = "turbo" | "deep" | "sol" | "luna" | "terra" | "fable" | "opus" | "sonnet";
@@ -703,8 +704,8 @@ export function HomePage({ onNavigate }: { onNavigate: (href: string) => void })
 
               {createError && <div className="home-create-error" role="alert"><strong>Creation failed</strong><span>{createError}</span></div>}
 
-              <button className="home-create-button" type="submit" disabled={creating} data-loading={creating ? "true" : "false"}>
-                {creating ? "Creating room..." : "Create task"}
+              <button className="home-create-button btn-jelly" type="submit" disabled={creating} data-loading={creating ? "true" : "false"}>
+                <JellyButtonContent>{creating ? "Creating room..." : "Create task"}</JellyButtonContent>
               </button>
             </form>
           </section>

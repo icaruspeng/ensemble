@@ -10,6 +10,7 @@ import {
   type CSSProperties,
 } from "react";
 import { HomePage } from "./HomePage";
+import { JellyButtonContent } from "./JellyButtonContent";
 import { ShareDialog } from "./ShareDialog";
 import { useSession } from "./useSession";
 import type {
@@ -441,8 +442,8 @@ function Header({
           </a>
         )}
         {isDriver && !isViewer && (
-          <button className="interrupt-button" type="button" onClick={onInterrupt}>
-            Interrupt
+          <button className="interrupt-button btn-jelly" type="button" onClick={onInterrupt}>
+            <JellyButtonContent>Interrupt</JellyButtonContent>
           </button>
         )}
         <button className="share-button" type="button" onClick={onShare}>
@@ -1467,8 +1468,8 @@ function Composer({
           aria-invalid={!!error}
           aria-describedby={error ? `${mobile ? "mobile" : "desktop"}-steer-error` : undefined}
         />
-        <button className="send-button" type="submit" disabled={status !== "live" || (mode === "steer" && !canSteer) || !text.trim()}>
-          Send
+        <button className="send-button btn-jelly" type="submit" disabled={status !== "live" || (mode === "steer" && !canSteer) || !text.trim()}>
+          <JellyButtonContent>Send</JellyButtonContent>
         </button>
       </div>
       {mobile && (

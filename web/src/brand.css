@@ -490,15 +490,15 @@ button.presence-person--driver:hover .avatar {
 }
 
 .interrupt-button {
-  border-color: color-mix(in srgb, var(--warn) 45%, transparent);
-  background: transparent;
-  color: color-mix(in srgb, var(--warn) 78%, var(--ink-text));
+  border-color: var(--warn);
+  background: var(--warn);
+  color: #ffffff;
 }
 
 .interrupt-button:hover {
-  border-color: var(--warn);
-  background: rgba(255, 91, 69, 0.08);
-  color: var(--ink-text);
+  border-color: color-mix(in srgb, var(--warn) 88%, #ffffff);
+  background: color-mix(in srgb, var(--warn) 88%, #ffffff);
+  color: #ffffff;
 }
 
 .button--accent,
@@ -2679,6 +2679,7 @@ button.presence-person--driver:hover .avatar {
 }
 
 .home-create-button[data-loading="true"]::after {
+  z-index: 2;
   width: 9px;
   height: 1px;
   border: 0;
@@ -2697,6 +2698,146 @@ button.presence-person--driver:hover .avatar {
   display: flex;
   align-items: center;
   gap: 6px;
+}
+
+@keyframes liquid-glass {
+  0% { background-position: 0% 0%; }
+  25% { background-position: 100% 0%; }
+  50% { background-position: 100% 100%; }
+  75% { background-position: 0% 100%; }
+  100% { background-position: 0% 0%; }
+}
+
+@keyframes liquid-glass-wobble {
+  0% { background-position: 100% 100%; transform: scale(1); }
+  33% { background-position: 0% 50%; transform: scale(1.05); }
+  66% { background-position: 50% 0%; transform: scale(0.98); }
+  100% { background-position: 100% 100%; transform: scale(1); }
+}
+
+.btn-jelly {
+  --btn-glow: var(--blue);
+  --btn-label-spacing: 0.04em;
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  transition: all 300ms var(--ease-ensemble);
+}
+
+.send-button.btn-jelly,
+.home-create-button.btn-jelly {
+  --btn-glow: var(--blue);
+}
+
+.interrupt-button.btn-jelly {
+  --btn-glow: var(--warn);
+}
+
+.btn-jelly:hover:not(:disabled) {
+  box-shadow: 0 8px 20px color-mix(in srgb, var(--btn-glow) 40%, transparent);
+}
+
+.btn-jelly:active:not(:disabled) {
+  transform: scale(0.95);
+}
+
+.btn-jelly__fx {
+  position: absolute;
+  z-index: 0;
+  inset: 0;
+  overflow: hidden;
+  border-radius: inherit;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 200ms var(--ease-ensemble);
+}
+
+.btn-jelly:hover:not(:disabled) .btn-jelly__fx {
+  opacity: 1;
+  transition-duration: 500ms;
+}
+
+.btn-jelly__fx::before,
+.btn-jelly__fx::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+}
+
+.btn-jelly__fx::before {
+  box-shadow:
+    inset 0 2px 6px rgba(255, 255, 255, 0.4),
+    inset 0 -4px 10px rgba(0, 0, 0, 0.28);
+  mix-blend-mode: overlay;
+}
+
+.btn-jelly__fx::after {
+  z-index: 2;
+  opacity: 0.6;
+  box-shadow:
+    inset 1px 1px 2px rgba(150, 255, 255, 0.4),
+    inset -1px -1px 2px rgba(255, 150, 255, 0.4);
+  mix-blend-mode: screen;
+}
+
+.btn-jelly__blobs {
+  position: absolute;
+  z-index: 1;
+  inset: -50%;
+  opacity: 0.6;
+  pointer-events: none;
+}
+
+.btn-jelly__blob {
+  position: absolute;
+  inset: 0;
+  background-position: center;
+  background-repeat: no-repeat;
+  pointer-events: none;
+  will-change: background-position, transform;
+}
+
+.btn-jelly__blob--wobble {
+  background-image: radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 0.3) 0%, transparent 60%);
+  background-size: 120% 120%;
+  animation: liquid-glass-wobble 10s ease-in-out infinite;
+  mix-blend-mode: overlay;
+}
+
+.btn-jelly__blob--flow {
+  background-image: radial-gradient(ellipse at 30% 70%, rgba(255, 255, 255, 0.2) 0%, transparent 50%);
+  background-size: 180% 180%;
+  animation: liquid-glass 8s ease-in-out infinite;
+  mix-blend-mode: screen;
+}
+
+.btn-jelly__blob--slow {
+  background-image: radial-gradient(circle at 70% 30%, rgba(255, 255, 255, 0.15) 0%, transparent 45%);
+  background-size: 150% 150%;
+  animation: liquid-glass 12s ease-in-out infinite reverse;
+  mix-blend-mode: screen;
+}
+
+.btn-jelly__label {
+  position: relative;
+  z-index: 1;
+  display: block;
+  letter-spacing: var(--btn-label-spacing);
+  text-shadow: none;
+  transform: scale(1);
+  transition:
+    transform 200ms var(--ease-ensemble),
+    letter-spacing 200ms var(--ease-ensemble),
+    text-shadow 200ms var(--ease-ensemble);
+}
+
+.btn-jelly:hover:not(:disabled) .btn-jelly__label {
+  letter-spacing: calc(var(--btn-label-spacing) + 0.02em);
+  text-shadow: 0 0 1px rgba(255, 255, 255, 0.2);
+  transform: scale(1.02);
+  transition-duration: 500ms;
 }
 
 @media (max-width: 1080px) and (min-width: 768px) {
@@ -3315,5 +3456,10 @@ button.presence-person--driver:hover .avatar {
 
   .home-hero__orb::before {
     transform: none !important;
+  }
+
+  .btn-jelly__blob {
+    animation: none !important;
+    will-change: auto;
   }
 }
