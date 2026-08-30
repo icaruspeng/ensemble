@@ -10,6 +10,7 @@ import {
   type CSSProperties,
 } from "react";
 import { HomePage } from "./HomePage";
+import { GracefulState } from "./GracefulState";
 import { JellyButtonContent } from "./JellyButtonContent";
 import { ShareDialog } from "./ShareDialog";
 import { useSession } from "./useSession";
@@ -85,7 +86,7 @@ function deriveSession(events: EnsembleEvent[], room: RoomRecord | null): Derive
   let ledger: LedgerRow[] = [];
   let previewUrl = room?.workspace.previewUrl ?? "";
   let workspaceStatus: WorkspaceStatus = room?.workspace.status ?? "provisioning";
-  let workspaceDetail = "";
+  let workspaceDetail = room?.workspace.detail ?? "";
 
   for (const event of events) {
     actors.set(event.actor.id, event.actor);
@@ -1275,11 +1276,9 @@ function PreviewPanel({
   roomName: string;
 }) {
   const ready = status === "ready";
-  const emptyHint = status === "provisioning"
-    ? "The repository, preview, and agent runtimes are being connected."
-    : status === "error"
-      ? "The room remains available for connected agents."
-      : "The live app will dock here after the first preview update.";
+  const loadingMessage = status === "provisioning"
+    ? detail || "Creating a Runloop workspace"
+    : "Waiting for the preview tunnel";
   return (
     <section className="preview-panel" aria-label="Live app preview">
       <header className="panel-heading preview-heading">
@@ -1301,22 +1300,17 @@ function PreviewPanel({
             referrerPolicy="no-referrer"
           />
         ) : (
-          <div className={`preview-empty preview-empty--${status}`}>
-            <span className="preview-empty__frame" aria-hidden="true">
-              {status === "provisioning" && <i />}
-            </span>
-            <strong
-              className="hint hint--below"
-              data-hint={detail ? undefined : emptyHint}
-            >
-              {status === "provisioning"
-                ? "Preparing your workspace"
-                : status === "error"
-                  ? "Workspace unavailable"
-                  : "Preview tunnel not published"}
-            </strong>
-            {detail && <p>{detail}</p>}
-          </div>
+          status === "error" ? (
+            <GracefulState
+              kind="workspace-error"
+              message="this workspace failed"
+              detail={detail}
+              actionHref="/"
+              actionLabel="create a new task"
+            />
+          ) : (
+            <GracefulState kind="loading" message={loadingMessage} />
+          )
         )}
       </div>
     </section>
@@ -1971,6 +1965,41 @@ function SessionPage({
 
   const transportNotice = session.transportMessage || actionMessage;
 
+  if (session.joinError) {
+    return (
+      <GracefulState
+        kind="invalid-invite"
+        message="this invite isn't valid — ask for a fresh link"
+        fullScreen
+        actionHref="/"
+        actionLabel="home"
+      />
+    );
+  }
+
+  if (derived.workspaceStatus === "error") {
+    return (
+      <GracefulState
+        kind="workspace-error"
+        message="this workspace failed"
+        detail={derived.workspaceDetail}
+        fullScreen
+        actionHref="/"
+        actionLabel="create a new task"
+      />
+    );
+  }
+
+  if (joinedName && (!session.room || derived.workspaceStatus === "provisioning")) {
+    return (
+      <GracefulState
+        kind="loading"
+        message={derived.workspaceDetail || session.transportMessage || "creating a runloop workspace"}
+        fullScreen
+      />
+    );
+  }
+
   return (
     <>
       <main className={`app-shell${isViewer ? " app-shell--viewer" : ""}`}>
@@ -2129,6 +2158,22 @@ function NotFound({ onHome }: { onHome: () => void }) {
   );
 }
 
+function InvalidInvitePage() {
+  useEffect(() => {
+    document.title = "Invalid invite | Ensemble";
+  }, []);
+
+  return (
+    <GracefulState
+      kind="invalid-invite"
+      message="this invite isn't valid — ask for a fresh link"
+      fullScreen
+      actionHref="/"
+      actionLabel="home"
+    />
+  );
+}
+
 export default function App() {
   const [route, setRoute] = useState<BrowserRoute>(readBrowserRoute);
 
@@ -2163,11 +2208,13 @@ export default function App() {
 
   if (sessionMatch) {
     const roomId = decodeURIComponent(sessionMatch[1]);
+    const keyToken = params.get("k") ?? "";
+    if (!mockMode && !keyToken.trim()) return <InvalidInvitePage />;
     return (
       <SessionPage
-        key={`${roomId}:${params.get("k") ?? ""}:${mockMode}`}
+        key={`${roomId}:${keyToken}:${mockMode}`}
         roomId={roomId}
-        keyToken={params.get("k") ?? ""}
+        keyToken={keyToken}
         params={params}
         mockMode={mockMode}
       />

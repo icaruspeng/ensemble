@@ -106,6 +106,7 @@ export interface SessionState {
   driverActorId: string | null;
   status: ConnectionStatus;
   transportMessage: string;
+  joinError: string;
   room: RoomRecord | null;
   role: SessionRole | null;
   send: (message: ClientMessage) => boolean;
@@ -126,6 +127,7 @@ export function useSession(
   const [driverActorId, setDriverActorId] = useState<string | null>(null);
   const [status, setStatus] = useState<ConnectionStatus>(name ? "connecting" : "idle");
   const [transportMessage, setTransportMessage] = useState("");
+  const [joinError, setJoinError] = useState("");
   const [room, setRoom] = useState<RoomRecord | null>(null);
   const [role, setRole] = useState<SessionRole | null>(null);
 
@@ -153,6 +155,7 @@ export function useSession(
     setActorId(null);
     setDriverActorId(null);
     setTransportMessage("");
+    setJoinError("");
     setRoom(null);
     setRole(null);
     sendRef.current = () => false;
@@ -476,6 +479,7 @@ export function useSession(
     let retryTimer: number | null = null;
     let reconnectAttempt = 0;
     let welcomed = false;
+    let joinRejected = false;
     let driverAuthoritySeq = -1;
 
     const connect = () => {
@@ -526,6 +530,7 @@ export function useSession(
           driverAuthoritySeq = replayHighSequence;
           updateDriver(frame.driverActorId ?? null);
           welcomed = true;
+          setJoinError("");
           reconnectAttempt = 0;
           setStatus("live");
           setTransportMessage("");
@@ -533,7 +538,17 @@ export function useSession(
         }
 
         if (frame.type === "error") {
-          setTransportMessage(frame.message?.trim() || "The server rejected that session action");
+          const message = frame.message?.trim() || "The server rejected that session action";
+          if (!welcomed) {
+            joinRejected = true;
+            sendRef.current = () => false;
+            setJoinError(message);
+            setTransportMessage("");
+            setStatus("idle");
+            ws.close();
+            return;
+          }
+          setTransportMessage(message);
           return;
         }
 
@@ -552,6 +567,7 @@ export function useSession(
         socket = null;
         welcomed = false;
         sendRef.current = () => false;
+        if (joinRejected) return;
         const delay = Math.min(500 * 2 ** reconnectAttempt, 8_000) + Math.round(Math.random() * 160);
         reconnectAttempt += 1;
         setStatus(navigator.onLine ? "reconnecting" : "offline");
@@ -589,6 +605,7 @@ export function useSession(
     driverActorId,
     status,
     transportMessage,
+    joinError,
     room,
     role,
     send,

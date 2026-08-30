@@ -1288,34 +1288,6 @@ button.presence-person:hover .avatar {
   padding-top: 42px;
 }
 
-.preview-empty__frame {
-  width: 48px;
-  height: 34px;
-  display: grid;
-  align-items: end;
-  padding: 4px;
-  overflow: hidden;
-  margin-bottom: 11px;
-  border: 1px solid var(--line-strong);
-  border-radius: 4px;
-  box-shadow: inset 0 7px 0 var(--surface-strong);
-}
-
-.preview-empty__frame i {
-  width: 72%;
-  height: 2px;
-  display: block;
-  border-radius: 2px;
-  background: var(--accent);
-  transform-origin: left;
-  animation: provision-scan 1.5s cubic-bezier(0.16, 1, 0.3, 1) infinite alternate;
-}
-
-.preview-empty--error .preview-empty__frame {
-  border-color: rgb(227 111 117 / 45%);
-  box-shadow: inset 0 7px 0 var(--danger-surface);
-}
-
 .control-deck {
   min-width: 0;
   min-height: 0;
@@ -1736,8 +1708,10 @@ button.presence-person:hover .avatar {
 .status-toast {
   position: fixed;
   z-index: 20;
+  top: max(16px, env(safe-area-inset-top));
   right: 16px;
-  bottom: 98px;
+  bottom: auto;
+  left: auto;
   max-width: min(360px, calc(100vw - 32px));
   padding: 9px 12px;
   border: 1px solid var(--line-strong);
@@ -1911,11 +1885,6 @@ button.presence-person:hover .avatar {
 @keyframes dialog-enter {
   from { opacity: 0; transform: translateY(14px) scale(0.985); }
   to { opacity: 1; transform: translateY(0) scale(1); }
-}
-
-@keyframes provision-scan {
-  from { opacity: 0.46; transform: scaleX(0.24); }
-  to { opacity: 1; transform: scaleX(1); }
 }
 
 @keyframes sheet-enter {
@@ -2271,10 +2240,11 @@ button.presence-person:hover .avatar {
   }
 
   .status-toast {
+    top: max(10px, env(safe-area-inset-top));
     right: 10px;
-    bottom: calc(78px + env(safe-area-inset-bottom));
-    left: 10px;
-    max-width: none;
+    bottom: auto;
+    left: auto;
+    max-width: min(360px, calc(100vw - 20px));
   }
 
   .sheet-backdrop {

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { GracefulState } from "./GracefulState";
 import { JellyButtonContent } from "./JellyButtonContent";
 import "./home.css";
 
@@ -444,6 +445,16 @@ export function HomePage({ onNavigate }: { onNavigate: (href: string) => void })
     [claudeAvailable],
   );
 
+  if (loadState === "loading" || creating) {
+    return (
+      <GracefulState
+        kind="loading"
+        message={creating ? "creating a runloop workspace" : "loading tasks"}
+        fullScreen
+      />
+    );
+  }
+
   const toggleAgent = (agentId: AgentId) => {
     setSelectedAgents((current) => current.includes(agentId)
       ? current.filter((candidate) => candidate !== agentId)
@@ -573,19 +584,10 @@ export function HomePage({ onNavigate }: { onNavigate: (href: string) => void })
         </section>
 
         <div className="home-command-stack">
-          <section className="home-panel home-task-panel" data-load-state={loadState} aria-labelledby="room-list-title" aria-busy={loadState === "loading"}>
+          <section className="home-panel home-task-panel" data-load-state={loadState} aria-labelledby="room-list-title">
             <h2 className="home-visually-hidden" id="room-list-title">Tasks</h2>
 
             <div className="home-task-panel__body">
-              {loadState === "loading" && (
-                <>
-                  <span className="home-visually-hidden" role="status">Loading tasks</span>
-                  <div className="home-skeleton-list" aria-hidden="true">
-                    <span /><span /><span />
-                  </div>
-                </>
-              )}
-
               {loadState === "error" && (
                 <div className="home-state home-state--error" role="alert">
                   <strong>Task feed unavailable</strong>
@@ -788,8 +790,8 @@ export function HomePage({ onNavigate }: { onNavigate: (href: string) => void })
                     : undefined}
               />
 
-              <button className="home-create-button btn-jelly" type="submit" disabled={creating} data-loading={creating ? "true" : "false"}>
-                <JellyButtonContent>{creating ? "Creating room..." : "Create task"}</JellyButtonContent>
+              <button className="home-create-button btn-jelly" type="submit">
+                <JellyButtonContent>Create task</JellyButtonContent>
               </button>
             </form>
           </section>

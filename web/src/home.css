@@ -332,21 +332,6 @@
 .home-status--error { color: #efa0a5; }
 .home-status--error i { background: var(--danger, #e36f75); }
 
-.home-skeleton-list {
-  display: grid;
-}
-
-.home-skeleton-list span {
-  height: 62px;
-  display: block;
-  border-bottom: 1px solid var(--line, #262c35);
-  background:
-    linear-gradient(90deg, transparent 0%, rgb(231 235 233 / 5%) 42%, rgb(231 235 233 / 10%) 50%, rgb(231 235 233 / 5%) 58%, transparent 100%),
-    linear-gradient(var(--surface-raised, #151920), var(--surface-raised, #151920));
-  background-size: 220% 100%, 100% 100%;
-  animation: home-shimmer 1.35s ease-in-out infinite;
-}
-
 .home-state {
   min-height: 142px;
   display: grid;
@@ -621,24 +606,6 @@
 
 .home-create-button:hover:not(:disabled) { filter: brightness(1.05); }
 
-.home-create-button[data-loading="true"] {
-  padding-right: 42px;
-}
-
-.home-create-button[data-loading="true"]::after {
-  content: "";
-  position: absolute;
-  top: 50%;
-  right: 17px;
-  width: 13px;
-  height: 13px;
-  margin-top: -7px;
-  border: 2px solid rgb(9 19 15 / 28%);
-  border-top-color: var(--accent-ink, #09130f);
-  border-radius: 50%;
-  animation: home-spin 700ms linear infinite;
-}
-
 .home-visually-hidden {
   position: absolute !important;
   width: 1px !important;
@@ -659,15 +626,6 @@
 @keyframes home-row-enter {
   from { opacity: 0; transform: translateY(6px); }
   to { opacity: 1; transform: translateY(0); }
-}
-
-@keyframes home-shimmer {
-  from { background-position: 120% 0, 0 0; }
-  to { background-position: -120% 0, 0 0; }
-}
-
-@keyframes home-spin {
-  to { transform: rotate(360deg); }
 }
 
 @media (max-width: 1050px) {
@@ -796,9 +754,7 @@
 @media (prefers-reduced-motion: reduce) {
   .home-hero,
   .home-panel,
-  .home-task-row,
-  .home-skeleton-list span,
-  .home-create-button[data-loading="true"]::after {
+  .home-task-row {
     animation: none !important;
   }
 
