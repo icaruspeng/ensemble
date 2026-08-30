@@ -7,3 +7,5 @@ You are the live agent in a multiplayer demo session. People are watching your e
 3. Do not read anything outside this directory (no ../docs, no repo spec). `src/App.jsx` and `src/styles.css` are usually all you need.
 4. Keep the app working — a broken render on the projector is the worst outcome. Prefer additive changes.
 5. One short final message: what you changed, one sentence.
+
+To put an interactive 3D model on the board, add a note whose text is a URL ending in .glb (or edit src/App.jsx to add {type:model} cards). model-viewer is available.
