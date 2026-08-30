@@ -242,9 +242,11 @@ export function createProvisioner(options = {}) {
   const encodedCodexAuth =
     nonemptyString(options.codexAuthJsonBase64) ??
     nonemptyString(env.CODEX_AUTH_JSON);
+  const envMaxLive = Number.parseInt(env.MAX_LIVE_WORKSPACES ?? "", 10);
   const maxLive =
     options.maxLiveWorkspaces ??
     options.maxLive ??
+    (Number.isInteger(envMaxLive) && envMaxLive >= 1 ? envMaxLive : undefined) ??
     DEFAULT_MAX_LIVE_WORKSPACES;
   const requestTimeoutMs =
     options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;

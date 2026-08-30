@@ -18,7 +18,7 @@ from runloop_api_client import RunloopSDK
 
 ROOT = Path(__file__).resolve().parent.parent
 STATE = ROOT / "deploy" / "state_v2.json"
-KEEP_ALIVE = 8 * 3600
+KEEP_ALIVE = 24 * 3600
 
 
 def read_state():
@@ -170,7 +170,7 @@ def main():
         f"PUBLIC_URL={hub_url} "
         f"DEMO_ROOM=1 DEMO_WORKSPACE_JSON=\"{demo_ws_json}\" "
         f"DEMO_STEER_TOKEN=crew DEMO_VIEW_TOKEN=watch "
-        f"OPEN_STEERING=1 "
+        f"OPEN_STEERING=1 MAX_LIVE_WORKSPACES=10 "
     )
     if reflex_cfg.get("apiKey"):
         env += f"REFLEX_API_KEY={reflex_cfg['apiKey']} REFLEX_ORG={reflex_cfg.get('organizationId','')} "
