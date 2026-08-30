@@ -28,6 +28,13 @@
 
 * {
   box-sizing: border-box;
+  scrollbar-width: none !important;
+}
+
+*::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;
 }
 
 html,
@@ -515,6 +522,30 @@ button.presence-person:hover .avatar {
   overflow: auto;
   overscroll-behavior: contain;
   scrollbar-color: var(--line-strong) transparent;
+}
+
+.session-streams .chat-scroll,
+.session-streams .work-log-scroll {
+  scrollbar-color: rgb(255 255 255 / 22%) transparent;
+  scrollbar-width: thin !important;
+}
+
+.session-streams .chat-scroll::-webkit-scrollbar,
+.session-streams .work-log-scroll::-webkit-scrollbar {
+  width: 3px;
+  height: 3px;
+  display: block;
+}
+
+.session-streams .chat-scroll::-webkit-scrollbar-track,
+.session-streams .work-log-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.session-streams .chat-scroll::-webkit-scrollbar-thumb,
+.session-streams .work-log-scroll::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: rgb(255 255 255 / 22%);
 }
 
 .timeline-list {

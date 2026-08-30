@@ -2717,6 +2717,9 @@ button.presence-person--driver:hover .avatar {
 
 .btn-jelly {
   --btn-glow: var(--blue);
+  --btn-highlight: color-mix(in srgb, var(--btn-glow) 70%, #ffffff 30%);
+  --btn-edge-leading: color-mix(in srgb, var(--btn-glow) 70%, #21dfff 30%);
+  --btn-edge-trailing: color-mix(in srgb, var(--btn-glow) 70%, #8b5cff 30%);
   --btn-label-spacing: 0.04em;
   position: relative;
   isolation: isolate;
@@ -2731,10 +2734,19 @@ button.presence-person--driver:hover .avatar {
 
 .interrupt-button.btn-jelly {
   --btn-glow: var(--warn);
+  --btn-edge-leading: color-mix(in srgb, var(--btn-glow) 70%, #ffad32 30%);
+  --btn-edge-trailing: color-mix(in srgb, var(--btn-glow) 70%, #ff2f89 30%);
 }
 
 .btn-jelly:hover:not(:disabled) {
-  box-shadow: 0 8px 20px color-mix(in srgb, var(--btn-glow) 40%, transparent);
+  box-shadow: 0 5px 12px color-mix(in srgb, var(--btn-glow) 16%, transparent);
+}
+
+.send-button.btn-jelly:hover:not(:disabled),
+.home-create-button.btn-jelly:hover:not(:disabled),
+.interrupt-button.btn-jelly:hover:not(:disabled) {
+  border-color: var(--btn-glow);
+  background: var(--btn-glow);
 }
 
 .btn-jelly:active:not(:disabled) {
@@ -2768,17 +2780,17 @@ button.presence-person--driver:hover .avatar {
 
 .btn-jelly__fx::before {
   box-shadow:
-    inset 0 2px 6px rgba(255, 255, 255, 0.4),
+    inset 0 2px 6px color-mix(in srgb, var(--btn-highlight) 15%, transparent),
     inset 0 -4px 10px rgba(0, 0, 0, 0.28);
   mix-blend-mode: overlay;
 }
 
 .btn-jelly__fx::after {
   z-index: 2;
-  opacity: 0.6;
+  opacity: 0.3;
   box-shadow:
-    inset 1px 1px 2px rgba(150, 255, 255, 0.4),
-    inset -1px -1px 2px rgba(255, 150, 255, 0.4);
+    inset 1px 1px 2px color-mix(in srgb, var(--btn-edge-leading) 40%, transparent),
+    inset -1px -1px 2px color-mix(in srgb, var(--btn-edge-trailing) 40%, transparent);
   mix-blend-mode: screen;
 }
 
@@ -2786,7 +2798,7 @@ button.presence-person--driver:hover .avatar {
   position: absolute;
   z-index: 1;
   inset: -50%;
-  opacity: 0.6;
+  opacity: 0.25;
   pointer-events: none;
 }
 
@@ -2800,21 +2812,33 @@ button.presence-person--driver:hover .avatar {
 }
 
 .btn-jelly__blob--wobble {
-  background-image: radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 0.3) 0%, transparent 60%);
+  background-image: radial-gradient(
+    circle at 50% 50%,
+    color-mix(in srgb, var(--btn-highlight) 30%, transparent) 0%,
+    transparent 60%
+  );
   background-size: 120% 120%;
   animation: liquid-glass-wobble 10s ease-in-out infinite;
   mix-blend-mode: overlay;
 }
 
 .btn-jelly__blob--flow {
-  background-image: radial-gradient(ellipse at 30% 70%, rgba(255, 255, 255, 0.2) 0%, transparent 50%);
+  background-image: radial-gradient(
+    ellipse at 30% 70%,
+    color-mix(in srgb, var(--btn-highlight) 20%, transparent) 0%,
+    transparent 50%
+  );
   background-size: 180% 180%;
   animation: liquid-glass 8s ease-in-out infinite;
   mix-blend-mode: screen;
 }
 
 .btn-jelly__blob--slow {
-  background-image: radial-gradient(circle at 70% 30%, rgba(255, 255, 255, 0.15) 0%, transparent 45%);
+  background-image: radial-gradient(
+    circle at 70% 30%,
+    color-mix(in srgb, var(--btn-highlight) 15%, transparent) 0%,
+    transparent 45%
+  );
   background-size: 150% 150%;
   animation: liquid-glass 12s ease-in-out infinite reverse;
   mix-blend-mode: screen;
@@ -2825,17 +2849,14 @@ button.presence-person--driver:hover .avatar {
   z-index: 1;
   display: block;
   letter-spacing: var(--btn-label-spacing);
-  text-shadow: none;
   transform: scale(1);
   transition:
     transform 200ms var(--ease-ensemble),
-    letter-spacing 200ms var(--ease-ensemble),
-    text-shadow 200ms var(--ease-ensemble);
+    letter-spacing 200ms var(--ease-ensemble);
 }
 
 .btn-jelly:hover:not(:disabled) .btn-jelly__label {
   letter-spacing: calc(var(--btn-label-spacing) + 0.02em);
-  text-shadow: 0 0 1px rgba(255, 255, 255, 0.2);
   transform: scale(1.02);
   transition-duration: 500ms;
 }

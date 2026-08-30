@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { JellyButtonContent } from "./JellyButtonContent";
 import "./home.css";
 
@@ -273,7 +273,88 @@ function storedSteerKey(roomId: string) {
   }
 }
 
+function useHomeFloatingScrollbar(
+  scrollContainerRef: { current: HTMLElement | null },
+  trackRef: { current: HTMLDivElement | null },
+  thumbRef: { current: HTMLDivElement | null },
+) {
+  useEffect(() => {
+    const scrollContainer = scrollContainerRef.current;
+    const track = trackRef.current;
+    const thumb = thumbRef.current;
+    if (!scrollContainer || !track || !thumb) return;
+
+    let frame = 0;
+    let settleTimer = 0;
+
+    const sync = () => {
+      frame = 0;
+      const scrollRange = scrollContainer.scrollHeight - scrollContainer.clientHeight;
+      const hasOverflow = scrollRange > 1;
+      track.hidden = !hasOverflow;
+
+      if (!hasOverflow) {
+        thumb.style.setProperty("--home-scroll-progress", "0");
+        track.removeAttribute("data-scrolling");
+        return;
+      }
+
+      const progress = Math.min(1, Math.max(0, scrollContainer.scrollTop / scrollRange));
+      thumb.style.setProperty("--home-scroll-progress", String(progress));
+    };
+
+    const scheduleSync = () => {
+      if (!frame) frame = window.requestAnimationFrame(sync);
+    };
+
+    const onScroll = () => {
+      scheduleSync();
+      track.dataset.scrolling = "true";
+      window.clearTimeout(settleTimer);
+      settleTimer = window.setTimeout(() => {
+        track.removeAttribute("data-scrolling");
+      }, 140);
+    };
+
+    scrollContainer.addEventListener("scroll", onScroll, { passive: true });
+
+    const content = scrollContainer.querySelector<HTMLElement>(".home-layout");
+    const resizeObserver = typeof ResizeObserver === "undefined"
+      ? null
+      : new ResizeObserver(scheduleSync);
+    resizeObserver?.observe(scrollContainer);
+    if (content) resizeObserver?.observe(content);
+    window.addEventListener("resize", scheduleSync, { passive: true });
+    sync();
+
+    return () => {
+      scrollContainer.removeEventListener("scroll", onScroll);
+      window.removeEventListener("resize", scheduleSync);
+      resizeObserver?.disconnect();
+      window.cancelAnimationFrame(frame);
+      window.clearTimeout(settleTimer);
+    };
+  }, [scrollContainerRef, thumbRef, trackRef]);
+}
+
+function HomeFloatingScrollbar({
+  scrollContainerRef,
+}: {
+  scrollContainerRef: { current: HTMLElement | null };
+}) {
+  const trackRef = useRef<HTMLDivElement>(null);
+  const thumbRef = useRef<HTMLDivElement>(null);
+  useHomeFloatingScrollbar(scrollContainerRef, trackRef, thumbRef);
+
+  return (
+    <div className="home-floating-scrollbar" ref={trackRef} hidden aria-hidden="true">
+      <div className="home-floating-scrollbar__thumb" ref={thumbRef} />
+    </div>
+  );
+}
+
 export function HomePage({ onNavigate }: { onNavigate: (href: string) => void }) {
+  const pageRef = useRef<HTMLElement>(null);
   const [rooms, setRooms] = useState<HomeRoom[]>([]);
   const [loadState, setLoadState] = useState<LoadState>("loading");
   const [loadError, setLoadError] = useState("");
@@ -441,7 +522,8 @@ export function HomePage({ onNavigate }: { onNavigate: (href: string) => void })
   };
 
   return (
-    <main className="home-page">
+    <main className="home-page" ref={pageRef}>
+      <HomeFloatingScrollbar scrollContainerRef={pageRef} />
       <div className="home-layout">
         <div className="home-command-stack">
           <section className="home-panel home-task-panel" data-load-state={loadState} aria-labelledby="room-list-title" aria-busy={loadState === "loading"}>
