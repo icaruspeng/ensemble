@@ -197,7 +197,7 @@ function ModelCard({ card, onVote, onRemove }) {
 export default function App() {
   const [isDark, setIsDark] = useState(() => {
     if (typeof window === "undefined") return true;
-    const saved = readStorage("roomboard-theme");
+    const saved = readStorage("roomboard-theme-v2");
     if (saved === "dark") return true;
     if (saved === "light") return false;
     return true;
@@ -216,7 +216,7 @@ export default function App() {
     document
       .querySelector('meta[name="theme-color"]')
       ?.setAttribute("content", isDark ? "#050505" : "#f3f1ec");
-    writeStorage("roomboard-theme", isDark ? "dark" : "light");
+    writeStorage("roomboard-theme-v2", isDark ? "dark" : "light");
   }, [isDark]);
 
   useEffect(() => {
