@@ -4647,7 +4647,7 @@ button.presence-person--driver:hover .avatar {
 }
 
 .home-layout {
-  min-height: calc(100dvh - 52px);
+  min-height: 100dvh;
   display: flex;
   flex-direction: column;
   align-items: center;

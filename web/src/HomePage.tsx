@@ -565,11 +565,6 @@ export function HomePage({ onNavigate }: { onNavigate: (href: string) => void })
   return (
     <main className="home-page" ref={pageRef}>
       <HomeFloatingScrollbar scrollContainerRef={pageRef} />
-      <header className="home-topbar">
-        <a className="brand-word brand-home-link home-brand" href="/" aria-label="Ensemble home">
-          ensemble
-        </a>
-      </header>
       <div className="home-layout">
         <section className="home-hero" aria-labelledby="home-title">
           <span className="home-hero__orb" aria-hidden="true" />
