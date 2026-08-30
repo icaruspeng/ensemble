@@ -2,7 +2,14 @@ import { useEffect, useRef, useState } from "react";
 import "@google/model-viewer";
 import sampleModelUrl from "./assets/roomboard-gem.glb?url&no-inline";
 
-const NOTE_COLORS = ["#ffe066", "#ffd6a5", "#caffbf", "#9bf6ff", "#ffc6ff"];
+const NOTE_COLORS = ["#6f73c9", "#8570a8", "#52798b", "#8a637c", "#5f766e"];
+const LEGACY_NOTE_COLORS = {
+  "#ffe066": NOTE_COLORS[0],
+  "#ffd6a5": NOTE_COLORS[1],
+  "#caffbf": NOTE_COLORS[2],
+  "#9bf6ff": NOTE_COLORS[3],
+  "#ffc6ff": NOTE_COLORS[4],
+};
 const MODEL_SUFFIX = /\.(?:glb|gltf)$/i;
 
 function readStorage(key) {
@@ -88,9 +95,11 @@ function normalizeNotes(value) {
         ? entry.author.trim().slice(0, 40)
         : "anonymous";
     const votes = normalizeVotes(entry.votes);
-    const color = NOTE_COLORS.includes(entry.color)
-      ? entry.color
-      : NOTE_COLORS[index % NOTE_COLORS.length];
+    const storedColor =
+      typeof entry.color === "string" ? entry.color.toLowerCase() : "";
+    const color = NOTE_COLORS.includes(storedColor)
+      ? storedColor
+      : LEGACY_NOTE_COLORS[storedColor] ?? NOTE_COLORS[index % NOTE_COLORS.length];
     const storedSource = getStoredModelSource(entry.src);
 
     if (entry.type === "model" && storedSource) {
@@ -135,7 +144,7 @@ function CardActions({ card, onVote, onRemove }) {
         type="button"
         className="note-vote"
         onClick={() => onVote(card.id)}
-        aria-label={`Vote for ${label} by ${card.author || "anonymous"}`}
+        aria-label={`Vote for ${label} by ${card.author || "anonymous"}; ${card.votes} votes`}
       >
         <span aria-hidden="true">▲</span> {card.votes}
       </button>
@@ -155,7 +164,7 @@ function ModelCard({ card, onVote, onRemove }) {
   const [loadFailed, setLoadFailed] = useState(false);
 
   return (
-    <article className="note model-card" style={{ background: card.color }}>
+    <article className="note model-card" style={{ "--note-hue": card.color }}>
       <div className="model-stage">
         <model-viewer
           src={card.src}
@@ -172,7 +181,7 @@ function ModelCard({ card, onVote, onRemove }) {
           onError={() => setLoadFailed(true)}
         />
         <span className="model-badge" aria-hidden="true">
-          3D
+          3d
         </span>
         {loadFailed && (
           <p className="model-error" role="status">
@@ -187,11 +196,11 @@ function ModelCard({ card, onVote, onRemove }) {
 
 export default function App() {
   const [isDark, setIsDark] = useState(() => {
-    if (typeof window === "undefined") return false;
+    if (typeof window === "undefined") return true;
     const saved = readStorage("roomboard-theme");
     if (saved === "dark") return true;
     if (saved === "light") return false;
-    return window.matchMedia("(prefers-color-scheme: dark)").matches;
+    return true;
   });
   const [notes, setNotes] = useState(loadNotes);
   const [author, setAuthor] = useState(loadAuthor);
@@ -203,7 +212,10 @@ export default function App() {
   const modelInputRef = useRef(null);
 
   useEffect(() => {
-    document.body.classList.toggle("theme-dark", isDark);
+    document.documentElement.dataset.theme = isDark ? "dark" : "light";
+    document
+      .querySelector('meta[name="theme-color"]')
+      ?.setAttribute("content", isDark ? "#050505" : "#f3f1ec");
     writeStorage("roomboard-theme", isDark ? "dark" : "light");
   }, [isDark]);
 
@@ -321,12 +333,14 @@ export default function App() {
   return (
     <div className="roomboard-shell">
       <header className="title-bar">
-        <div className="brand-mark" aria-hidden="true">
-          R
-        </div>
+        <div className="brand-mark" aria-hidden="true" />
         <div className="title-copy">
-          <h1>Roomboard</h1>
-          <p>A shared wall for the room</p>
+          <h1
+            title="a shared wall for the room"
+            aria-label="roomboard, a shared wall for the room"
+          >
+            roomboard
+          </h1>
         </div>
         <button
           type="button"
@@ -334,7 +348,7 @@ export default function App() {
           onClick={() => setIsDark((previous) => !previous)}
           aria-label={`Switch to ${isDark ? "light" : "dark"} mode`}
         >
-          {isDark ? "☀️" : "🌙"}
+          {isDark ? "light" : "dark"}
         </button>
       </header>
 
@@ -353,10 +367,6 @@ export default function App() {
       </div>
 
       <main className="board" aria-label="Shared room board">
-        {notes.length === 0 && (
-          <p className="board-empty">Tap + to pin a note or 3D model.</p>
-        )}
-
         {notes.map((note) =>
           note.type === "model" ? (
             <ModelCard
@@ -366,11 +376,15 @@ export default function App() {
               key={note.id}
             />
           ) : (
-            <article className="note" style={{ background: note.color }} key={note.id}>
+            <article
+              className="note"
+              style={{ "--note-hue": note.color }}
+              key={note.id}
+            >
               <textarea
                 className="note-text"
                 value={note.text}
-                placeholder="Write something…"
+                placeholder="write something…"
                 onChange={(event) => updateNote(note.id, event.target.value)}
                 aria-label={`Note by ${note.author || "anonymous"}`}
               />
@@ -389,11 +403,11 @@ export default function App() {
             >
               {addMode === "choices" ? (
                 <>
-                  <p className="add-panel-title">Add to the board</p>
+                  <p className="add-panel-title">add to the board</p>
                   <div className="add-options">
                     <button type="button" className="add-option" onClick={addNote}>
                       <span className="add-option-icon note-icon" aria-hidden="true" />
-                      <span>Note</span>
+                      <span>note</span>
                     </button>
                     <button
                       type="button"
@@ -401,9 +415,9 @@ export default function App() {
                       onClick={() => setAddMode("model")}
                     >
                       <span className="add-option-icon model-icon" aria-hidden="true">
-                        ◇
+                        3d
                       </span>
-                      <span>3D model</span>
+                      <span>3d model</span>
                     </button>
                   </div>
                 </>
@@ -422,7 +436,7 @@ export default function App() {
                       ←
                     </button>
                     <div>
-                      <label htmlFor="model-url">Model URL</label>
+                      <label htmlFor="model-url">model url</label>
                       <p>.glb or .gltf</p>
                     </div>
                   </div>
@@ -443,7 +457,7 @@ export default function App() {
                     aria-describedby={modelError ? "model-url-error" : "model-url-help"}
                   />
                   <p className="model-url-help" id="model-url-help">
-                    Paste a direct link to a glTF model.
+                    paste a direct link to a glTF model.
                   </p>
                   {modelError && (
                     <p className="model-url-error" id="model-url-error" role="alert">
@@ -451,7 +465,7 @@ export default function App() {
                     </p>
                   )}
                   <button type="submit" className="model-submit">
-                    Add model
+                    add model
                   </button>
                   <div className="sample-divider">
                     <span>or</span>
@@ -464,7 +478,7 @@ export default function App() {
                     <span className="sample-gem" aria-hidden="true">
                       ◇
                     </span>
-                    Use sample model
+                    use sample model
                     <span className="offline-chip">offline</span>
                   </button>
                 </form>
@@ -483,7 +497,10 @@ export default function App() {
                 setAddMode("choices");
               }
             }}
-            aria-label={addMode ? "Close add menu" : "Add to board"}
+            aria-label={addMode ? "Close add menu" : "Add a note or 3D model"}
+            data-hint={
+              addMode ? "close add menu" : "tap + to pin a note or 3d model"
+            }
             aria-expanded={Boolean(addMode)}
             aria-controls="roomboard-add-panel"
           >
@@ -494,7 +511,7 @@ export default function App() {
         </div>
       </main>
 
-      <footer className="roomboard-footer">built live by Ensemble.</footer>
+      <footer className="roomboard-footer">built live by ensemble.</footer>
     </div>
   );
 }
