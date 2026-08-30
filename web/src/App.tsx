@@ -329,7 +329,10 @@ function ConnectionMark({ status }: { status: ConnectionStatus }) {
             ? "Connecting"
             : "Idle";
   return (
-    <span className={`connection-mark connection-mark--${status}`} title={`Connection: ${label}`}>
+    <span
+      className={`connection-mark connection-mark--${status} hint hint--below`}
+      data-hint={`Connection: ${label}`}
+    >
       <span className="connection-mark__signal" aria-hidden="true" />
       {label}
     </span>
@@ -384,9 +387,9 @@ function Header({
             const actor: Actor = { id: `agent:${agent.agentId}`, name: agent.label, kind: "agent" };
             return (
               <span
-                className="presence-person presence-person--agent"
+                className="presence-person presence-person--agent hint hint--below"
                 key={agent.agentId}
-                title={`${agent.label}, ${agent.model}`}
+                data-hint={`${agent.label}, ${agent.model}`}
                 role="img"
                 aria-label={`${agent.label}, agent using ${agent.model}`}
               >
@@ -407,20 +410,20 @@ function Header({
             );
             return canHandoff ? (
               <button
-                className={`presence-person${driver ? " presence-person--driver" : ""}${self ? " presence-person--self" : ""}`}
+                className={`presence-person hint hint--below${driver ? " presence-person--driver" : ""}${self ? " presence-person--self" : ""}`}
                 type="button"
                 key={actor.id}
                 onClick={() => onHandoff(actor.id)}
-                title={`Hand driver control to ${actor.name}`}
+                data-hint={`Hand driver control to ${actor.name}`}
                 aria-label={`Hand driver control to ${accessibleName}`}
               >
                 {content}
               </button>
             ) : (
               <span
-                className={`presence-person${driver ? " presence-person--driver" : ""}${self ? " presence-person--self" : ""}`}
+                className={`presence-person hint hint--below${driver ? " presence-person--driver" : ""}${self ? " presence-person--self" : ""}`}
                 key={actor.id}
-                title={accessibleName}
+                data-hint={accessibleName}
                 role="img"
                 aria-label={accessibleName}
               >
@@ -537,7 +540,13 @@ function InlineCommentComposer({
 
   return (
     <form className="inline-comment" onSubmit={submit}>
-      <label htmlFor={`comment-${target.anchor.eventId}`}>Pin a note to {target.label}</label>
+      <label
+        className="hint hint--align-start"
+        data-hint="Be specific about this change"
+        htmlFor={`comment-${target.anchor.eventId}`}
+      >
+        Pin a note to {target.label}
+      </label>
       <div className="inline-comment__row">
         <input
           id={`comment-${target.anchor.eventId}`}
@@ -547,7 +556,6 @@ function InlineCommentComposer({
             setText(event.target.value);
             setError("");
           }}
-          placeholder="Be specific about this change"
           aria-invalid={!!error}
           aria-describedby={error ? `comment-${target.anchor.eventId}-error` : undefined}
         />
@@ -590,9 +598,9 @@ function agentShortLabel(agent: AgentSpec) {
 function AgentChip({ agent, compact = false }: { agent: AgentSpec; compact?: boolean }) {
   return (
     <span
-      className={`agent-chip${compact ? " agent-chip--compact" : ""}`}
+      className={`agent-chip hint hint--below${compact ? " agent-chip--compact" : ""}`}
       style={{ "--agent-color": agent.color || fallbackAgentColor(agent.agentId) } as CSSProperties}
-      title={`${agent.label} uses ${agent.model}`}
+      data-hint={`${agent.label} uses ${agent.model}`}
     >
       {agentShortLabel(agent)}
     </span>
@@ -793,7 +801,8 @@ function TimelineEvent({
       const stat = diffStat(payload.patch);
       body = (
         <div
-          className={commentTarget ? "annotatable" : undefined}
+          className={commentTarget ? "annotatable hint" : undefined}
+          data-hint={commentTarget ? "Click to pin a note to this diff" : undefined}
           onPointerDown={beginLongPress}
           onPointerUp={cancelLongPress}
           onPointerCancel={cancelLongPress}
@@ -820,7 +829,6 @@ function TimelineEvent({
             <pre
               className="diff-code"
               onClick={() => commentTarget && onOpenComment(commentTarget)}
-              title={commentTarget ? "Click to pin a note to this diff" : undefined}
             >
               <code>{payload.patch.split("\n").map((line, index) => <span className={diffLineClass(line)} key={`${event.id}-${index}`}>{line || " "}</span>)}</code>
             </pre>
@@ -833,13 +841,13 @@ function TimelineEvent({
       const payload = payloadOf(event, "agent.message");
       body = (
         <article
-          className={`agent-message${commentTarget ? " annotatable" : ""}`}
+          className={`agent-message${commentTarget ? " annotatable hint" : ""}`}
+          data-hint={commentTarget ? "Click to pin a note to this message" : undefined}
           onClick={() => commentTarget && onOpenComment(commentTarget)}
           onPointerDown={beginLongPress}
           onPointerUp={cancelLongPress}
           onPointerCancel={cancelLongPress}
           onPointerMove={cancelLongPress}
-          title={commentTarget ? "Click to pin a note to this message" : undefined}
         >
           <div className="agent-message__top">
             <MetaLine actor={event.actor} ts={event.ts} label="reported" />
@@ -986,8 +994,9 @@ function StreamPaneHeader({
   return (
     <header className="stream-pane__heading">
       <button
-        className="panel-heading stream-pane__header stream-pane__toggle"
+        className={`panel-heading stream-pane__header stream-pane__toggle hint hint--align-start${pane === "work" && folded ? "" : " hint--below"}`}
         type="button"
+        data-hint={subtitle}
         onClick={onToggle}
         aria-expanded={!folded}
         aria-controls={`${pane}-stream-body`}
@@ -995,7 +1004,6 @@ function StreamPaneHeader({
         <span className="stream-pane__chevron" aria-hidden="true">⌄</span>
         <span className="stream-pane__title">
           <strong>{title}</strong>
-          <span>{subtitle}</span>
         </span>
         <span className="event-count">{count}</span>
         {folded && unread > 0 && (
@@ -1070,13 +1078,13 @@ function ChatEvent({
       <Avatar actor={displayActor} size="small" color={agent?.color} />
       <div className="chat-row__content">
         <article
-          className={`chat-bubble${commentTarget ? " annotatable" : ""}`}
+          className={`chat-bubble${commentTarget ? " annotatable hint" : ""}`}
+          data-hint={commentTarget ? "Click to pin a note to this message" : undefined}
           onClick={() => commentTarget && onOpenComment(commentTarget)}
           onPointerDown={beginLongPress}
           onPointerUp={cancelLongPress}
           onPointerCancel={cancelLongPress}
           onPointerMove={cancelLongPress}
-          title={commentTarget ? "Click to pin a note to this message" : undefined}
         >
           <div className="chat-meta">
             <strong>{displayActor.name}</strong>
@@ -1180,7 +1188,7 @@ function Timeline({
         <StreamPaneHeader
           pane="chat"
           title="💬 chat"
-          subtitle="crew and agents, together"
+          subtitle="Crew and agents, together. The room is listening. Start a chat or steer the crew. Agent replies will gather here."
           count={chatEvents.length}
           unread={chatUnread}
           folded={chatFolded}
@@ -1199,12 +1207,7 @@ function Timeline({
               followChatTail.current = element.scrollHeight - element.scrollTop - element.clientHeight < 120;
             }}
           >
-            {!chatEvents.length ? (
-              <div className="timeline-empty chat-empty">
-                <strong>The room is listening</strong>
-                <p>Start a chat or steer the crew. Agent replies will gather here.</p>
-              </div>
-            ) : (
+            {!!chatEvents.length && (
               <ol className="chat-list" role="feed" aria-live="polite" aria-relevant="additions">
                 {chatEvents.map((event, index) => (
                   <ChatEvent
@@ -1252,8 +1255,12 @@ function Timeline({
           >
             {!workEvents.length ? (
               <div className="timeline-empty work-log__empty">
-                <strong>No work logged yet</strong>
-                <p>Tasks, commands, diffs, and workspace events will appear here.</p>
+                <strong
+                  className="hint hint--below"
+                  data-hint="Tasks, commands, diffs, and workspace events will appear here."
+                >
+                  No work logged yet
+                </strong>
               </div>
             ) : (
               <ol className="timeline-list work-log__list" role="feed" aria-live="polite" aria-relevant="additions">
@@ -1296,6 +1303,11 @@ function PreviewPanel({
   roomName: string;
 }) {
   const ready = status === "ready";
+  const emptyHint = status === "provisioning"
+    ? "The repository, preview, and agent runtimes are being connected."
+    : status === "error"
+      ? "The room remains available for connected agents."
+      : "The live app will dock here after the first preview update.";
   return (
     <section className="preview-panel" aria-label="Live app preview">
       <header className="panel-heading preview-heading">
@@ -1321,20 +1333,17 @@ function PreviewPanel({
             <span className="preview-empty__frame" aria-hidden="true">
               {status === "provisioning" && <i />}
             </span>
-            <strong>
+            <strong
+              className="hint hint--below"
+              data-hint={detail ? undefined : emptyHint}
+            >
               {status === "provisioning"
                 ? "Preparing your workspace"
                 : status === "error"
                   ? "Workspace unavailable"
                   : "Preview tunnel not published"}
             </strong>
-            <p>
-              {detail || (status === "provisioning"
-                ? "The repository, preview, and agent runtimes are being connected."
-                : status === "error"
-                  ? "The room remains available for connected agents."
-                  : "The live app will dock here after the first preview update.")}
-            </p>
+            {detail && <p>{detail}</p>}
           </div>
         )}
       </div>
@@ -1386,6 +1395,12 @@ function Composer({
     }
   };
 
+  const composerHint = mode === "chat"
+    ? "Visible to everyone. Message the crew."
+    : isDriver
+      ? "Dispatches directly. Describe the next visible change."
+      : "Describe the next visible change.";
+
   return (
     <form
       className={`steer-composer steer-composer--${mode} composer--${mode}${mobile ? " steer-composer--mobile" : ""}`}
@@ -1413,13 +1428,14 @@ function Composer({
           chat
         </button>
       </div>
-      <div className="composer-label">
+      <div
+        className="composer-label hint hint--below hint--align-start"
+        data-hint={composerHint}
+      >
         <label htmlFor={mobile ? "mobile-steer" : "desktop-steer"}>
           {mode === "chat" ? "Chat with the room" : "Steer the room"}
         </label>
-        <span>
-          {mode === "chat" ? "Visible to everyone" : isDriver ? "Dispatches directly" : "Driver review required"}
-        </span>
+        {mode === "steer" && !isDriver && <span>Driver review required</span>}
       </div>
       {mode === "steer" && !!agents.length && (
         <div className="composer-target" role="group" aria-label="Choose an agent for this steer">
@@ -1447,7 +1463,6 @@ function Composer({
           value={text}
           onChange={(event) => setText(event.target.value)}
           onKeyDown={handleKey}
-          placeholder={mode === "chat" ? "Message the crew" : "Describe the next visible change"}
           disabled={status !== "live" || (mode === "steer" && !canSteer)}
           aria-invalid={!!error}
           aria-describedby={error ? `${mobile ? "mobile" : "desktop"}-steer-error` : undefined}
@@ -1493,7 +1508,14 @@ function TaskQueue({
       </header>
       <div className="control-section__body">
         {!visibleTasks.length ? (
-          <div className="control-empty"><strong>Queue clear</strong><span>The next accepted steer lands here.</span></div>
+          <div className="control-empty">
+            <strong
+              className="hint hint--below hint--align-start"
+              data-hint="The next accepted steer lands here."
+            >
+              Queue clear
+            </strong>
+          </div>
         ) : (
           visibleTasks.map((task) => {
             const canDrop = canManage && task.status === "queued" && (isDriver || task.byActorId === actorId);
@@ -1508,11 +1530,11 @@ function TaskQueue({
                   <code>{task.taskId}</code>
                   {canDrop && (
                     <button
-                      className="task-drop"
+                      className="task-drop hint hint--align-end"
                       type="button"
                       onClick={() => onDrop(task.taskId)}
                       aria-label={`Remove task: ${task.text}`}
-                      title="Remove queued task"
+                      data-hint="Remove queued task"
                     >
                       ✕
                     </button>
@@ -1578,7 +1600,14 @@ function GatePanel({
       </header>
       <div className="control-section__body">
         {!gates.length ? (
-          <div className="control-empty"><strong>No decisions waiting</strong><span>Teammate steers will pause here for the driver.</span></div>
+          <div className="control-empty">
+            <strong
+              className="hint hint--below hint--align-start"
+              data-hint="Teammate steers will pause here for the driver."
+            >
+              No decisions waiting
+            </strong>
+          </div>
         ) : (
           gates.map((gate) => (
             <article className="gate-card" key={gate.gateId}>
@@ -1649,26 +1678,32 @@ function Ledger({ rows, presence }: { rows: LedgerRow[]; presence: Actor[] }) {
     <footer className="ledger" aria-label="Attribution ledger">
       <div className="ledger__title">
         <span>Attribution</span>
-        <strong>Ledger</strong>
+        <strong
+          className={!displayRows.length ? "hint hint--align-start" : undefined}
+          data-hint={!displayRows.length ? "Contributions will be attributed as the room works." : undefined}
+        >
+          Ledger
+        </strong>
       </div>
       <div className="ledger__rows">
-        {!displayRows.length ? (
-          <span className="ledger-empty">Contributions will be attributed as the room works.</span>
-        ) : (
-          displayRows.map((row) => {
+        {displayRows.map((row) => {
             const actor: Actor = { id: row.actorId, name: row.name, kind: "human" };
             return (
-              <article className="ledger-person" key={row.actorId}>
+              <article
+                className={`ledger-person${!row.outcomes.length ? " hint hint--ledger-empty" : ""}`}
+                data-hint={!row.outcomes.length ? "No published outcome yet" : undefined}
+                key={row.actorId}
+              >
                 <Avatar actor={actor} size="small" />
                 <div className="ledger-person__identity">
                   <strong>{row.name}</strong>
                   <div
                     className="ledger-person__outcomes"
-                    role="region"
-                    aria-label={`${row.name} outcomes`}
-                    tabIndex={0}
+                    role={row.outcomes.length ? "region" : undefined}
+                    aria-label={row.outcomes.length ? `${row.name} outcomes` : undefined}
+                    tabIndex={row.outcomes.length ? 0 : undefined}
                   >
-                    {row.outcomes.length ? row.outcomes.join(" | ") : "No published outcome yet"}
+                    {row.outcomes.join(" | ")}
                   </div>
                 </div>
                 <dl>
@@ -1678,8 +1713,7 @@ function Ledger({ rows, presence }: { rows: LedgerRow[]; presence: Actor[] }) {
                 </dl>
               </article>
             );
-          })
-        )}
+          })}
       </div>
     </footer>
   );
@@ -1719,11 +1753,12 @@ function JoinDialog({ initialName, mockMode, onJoin }: { initialName: string; mo
 
   return (
     <div className="join-overlay">
-      <section ref={dialogRef} tabIndex={-1} className="join-dialog" role="dialog" aria-modal="true" aria-labelledby="join-title">
-        <div className="join-dialog__brand">ENSEMBLE</div>
-        <h1 id="join-title">Join the live build</h1>
-        <p>Watch the agents work and join your team while the room builds.</p>
-        <form onSubmit={submit}>
+      <section ref={dialogRef} tabIndex={-1} className="join-dialog" role="dialog" aria-modal="true" aria-label="Join the live build">
+        <form
+          className="hint hint--align-start"
+          data-hint={`Watch the agents work and join your team while the room builds. This name appears in the room presence.${mockMode ? " Standalone two-agent session." : ""}`}
+          onSubmit={submit}
+        >
           <label htmlFor="join-name">Your name</label>
           <input
             id="join-name"
@@ -1734,15 +1769,12 @@ function JoinDialog({ initialName, mockMode, onJoin }: { initialName: string; mo
               setName(event.target.value);
               setError("");
             }}
-            placeholder="How should the room know you?"
             aria-invalid={!!error}
-            aria-describedby={error ? "join-name-error" : "join-name-help"}
+            aria-describedby={error ? "join-name-error" : undefined}
           />
-          <span className="input-help" id="join-name-help">This name appears in the room presence.</span>
           {error && <p className="form-error" id="join-name-error" role="alert">{error}</p>}
           <button className="join-button" type="submit">Enter session</button>
         </form>
-        {mockMode && <span className="join-dialog__mock">Standalone two-agent session</span>}
       </section>
     </div>
   );

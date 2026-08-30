@@ -449,9 +449,10 @@ export function HomePage({ onNavigate }: { onNavigate: (href: string) => void })
     <main className="home-page">
       <header className="home-topbar">
         <a
-          className="home-brand"
+          className="home-brand hint hint--below hint--align-start"
           href="/"
           aria-label="Ensemble home"
+          data-hint="Multi-agent task hub"
           onClick={(event) => {
             event.preventDefault();
             onNavigate("/");
@@ -459,38 +460,31 @@ export function HomePage({ onNavigate }: { onNavigate: (href: string) => void })
         >
           ENSEMBLE
         </a>
-        <span className="home-hub-label">MULTI-AGENT TASK HUB</span>
       </header>
 
       <div className="home-layout">
         <section className="home-hero" aria-labelledby="home-title">
           <span className="home-hero__orb" aria-hidden="true" />
-          <span className="home-hero__eyebrow">LIVE COLLABORATIVE AGENTS</span>
-          <h1 id="home-title">The multiplayer moment for AI</h1>
-          <p>Open a task, choose the agents, and watch every steer and outcome land in one shared room.</p>
+          <h1
+            className="hint hint--below"
+            id="home-title"
+            data-hint="Open a task, choose the agents, and watch every steer and outcome land in one shared room. Live collaborative agents. One living timeline. Every outcome attributed. Preview while agents work."
+          >
+            The multiplayer moment for AI
+          </h1>
         </section>
-
-        <dl className="home-signal-grid">
-          <div>
-            <dt>Shared</dt>
-            <dd>One living timeline</dd>
-          </div>
-          <div>
-            <dt>Directed</dt>
-            <dd>Every outcome attributed</dd>
-          </div>
-          <div>
-            <dt>Live</dt>
-            <dd>Preview while agents work</dd>
-          </div>
-        </dl>
 
         <div className="home-command-stack">
           <section className="home-panel home-task-panel" data-load-state={loadState} aria-labelledby="room-list-title" aria-busy={loadState === "loading"}>
             <header className="home-panel__heading">
               <div>
-                <h2 id="room-list-title">Tasks</h2>
-                <span>Rooms active in this hub</span>
+                <h2
+                  className="hint hint--below hint--align-start"
+                  id="room-list-title"
+                  data-hint="Rooms active in this hub"
+                >
+                  Tasks
+                </h2>
               </div>
               {loadState === "ready" && <strong>{rooms.length}</strong>}
             </header>
@@ -516,14 +510,18 @@ export function HomePage({ onNavigate }: { onNavigate: (href: string) => void })
               {loadState === "ready" && !rooms.length && (
                 <div className="home-state home-state--empty">
                   <span aria-hidden="true">+</span>
-                  <strong>No tasks yet</strong>
-                  <p>Create the first room and invite your collaborators.</p>
+                  <strong
+                    className="hint hint--below hint--align-start"
+                    data-hint="Create the first room and invite your collaborators."
+                  >
+                    No tasks yet
+                  </strong>
                 </div>
               )}
 
               {loadState === "ready" && !!rooms.length && (
                 <ol className="home-task-list">
-                  {rooms.map((room) => {
+                  {rooms.map((room, index) => {
                     const created = roomDate(room.createdAt);
                     const steerKey = room.roomId === "demo" ? null : storedSteerKey(room.roomId);
                     const roomHref = `/s/${encodeURIComponent(room.roomId)}${steerKey ? `?k=${encodeURIComponent(steerKey)}` : ""}`;
@@ -536,9 +534,11 @@ export function HomePage({ onNavigate }: { onNavigate: (href: string) => void })
                         aria-busy={deleting || undefined}
                         data-deleting={deleting ? "true" : undefined}
                       >
-                        <div className="home-task-row__identity">
+                        <div
+                          className={`home-task-row__identity hint hint--align-start${index === 0 ? " hint--below" : ""}`}
+                          data-hint={created.label === "Recently created" ? created.label : `Created ${created.label}`}
+                        >
                           <strong>{room.name}</strong>
-                          <code>{room.roomId}</code>
                           {deleteError && (
                             <p className="home-task-row__delete-error" role="alert">{deleteError}</p>
                           )}
@@ -547,7 +547,6 @@ export function HomePage({ onNavigate }: { onNavigate: (href: string) => void })
                           <i aria-hidden="true" />{statusLabel(room.status)}
                         </span>
                         <div className="home-task-row__actions">
-                          <time dateTime={created.iso}>{created.label}</time>
                           <a
                             className="home-task-row__open"
                             href={roomHref}
@@ -561,11 +560,11 @@ export function HomePage({ onNavigate }: { onNavigate: (href: string) => void })
                           </a>
                           {steerKey && (
                             <button
-                              className="home-task-row__delete"
+                              className={`home-task-row__delete hint hint--align-end${index === 0 ? " hint--below" : ""}`}
                               type="button"
                               disabled={deleting}
                               aria-label={deleting ? `Deleting ${room.name}` : `Delete ${room.name}`}
-                              title={deleting ? "Deleting task" : "Delete task"}
+                              data-hint={deleting ? "Deleting task" : "Delete task"}
                               onClick={() => void deleteRoom(room.roomId)}
                             >
                               <span aria-hidden="true">{deleting ? "…" : "×"}</span>
@@ -586,8 +585,13 @@ export function HomePage({ onNavigate }: { onNavigate: (href: string) => void })
           <section className="home-panel home-create-panel" aria-labelledby="create-task-title">
             <header className="home-panel__heading">
               <div>
-                <h2 id="create-task-title">Create a task</h2>
-                <span>Provision a room and invite your team</span>
+                <h2
+                  className="hint hint--below hint--align-start"
+                  id="create-task-title"
+                  data-hint="Provision a room and invite your team"
+                >
+                  Create a task
+                </h2>
               </div>
               <span className="home-create-panel__ready">READY</span>
             </header>
@@ -611,7 +615,10 @@ export function HomePage({ onNavigate }: { onNavigate: (href: string) => void })
                 {formErrors.name && <p className="home-field-error" id="room-name-error" role="alert">{formErrors.name}</p>}
               </div>
 
-              <div className="home-field">
+              <div
+                className="home-field hint hint--below hint--align-start"
+                data-hint="Describe the outcome this room should produce. This becomes the shared brief for every selected agent."
+              >
                 <label htmlFor="room-goal">Goal</label>
                 <textarea
                   id="room-goal"
@@ -622,11 +629,9 @@ export function HomePage({ onNavigate }: { onNavigate: (href: string) => void })
                     setFormErrors((current) => ({ ...current, goal: undefined }));
                     setCreateError("");
                   }}
-                  placeholder="Describe the outcome this room should produce"
                   aria-invalid={!!formErrors.goal}
-                  aria-describedby={formErrors.goal ? "room-goal-error" : "room-goal-help"}
+                  aria-describedby={formErrors.goal ? "room-goal-error" : undefined}
                 />
-                <span className="home-field-help" id="room-goal-help">This becomes the shared brief for every selected agent.</span>
                 {formErrors.goal && <p className="home-field-error" id="room-goal-error" role="alert">{formErrors.goal}</p>}
               </div>
 
@@ -636,7 +641,11 @@ export function HomePage({ onNavigate }: { onNavigate: (href: string) => void })
                   {offeredAgents.map((agent) => {
                     const selected = selectedAgents.includes(agent.agentId);
                     return (
-                      <label className={`home-agent-choice${selected ? " home-agent-choice--selected" : ""}`} key={agent.agentId}>
+                      <label
+                        className={`home-agent-choice hint hint--below${selected ? " home-agent-choice--selected" : ""}`}
+                        data-hint={`${agent.engine} / ${agent.model}`}
+                        key={agent.agentId}
+                      >
                         <input
                           type="checkbox"
                           value={agent.agentId}
@@ -650,8 +659,6 @@ export function HomePage({ onNavigate }: { onNavigate: (href: string) => void })
                         />
                         <span className="home-agent-choice__copy">
                           <strong>{agent.shortLabel}</strong>
-                          <span>{agent.label}</span>
-                          <code>{agent.engine} / {agent.model}</code>
                         </span>
                       </label>
                     );

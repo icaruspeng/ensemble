@@ -187,14 +187,19 @@ function ShareLinkRow({ kind, label, link }: ShareLinkRowProps) {
 
   return (
     <section className="share-dialog__row" aria-labelledby={`share-${kind}-label`}>
-      <div className="share-dialog__role">
+      <div
+        className="share-dialog__role hint hint--below hint--align-start"
+        data-hint={kind === "steer" ? "Join and direct agents" : "Watch in real time"}
+      >
         <strong id={`share-${kind}-label`}>{label}</strong>
-        <span>{kind === "steer" ? "Join and direct agents" : "Watch in real time"}</span>
       </div>
 
-      <div className="share-dialog__link-column">
+      <div
+        className="share-dialog__link-column hint hint--below hint--align-start"
+        data-hint={link}
+      >
         {link ? (
-          <div className="share-dialog__link" title={link}>{link}</div>
+          <div className="share-dialog__link">{link}</div>
         ) : (
           <div className="share-dialog__link share-dialog__link--missing">
             Link unavailable
@@ -237,7 +242,10 @@ function ShareLinkRow({ kind, label, link }: ShareLinkRowProps) {
 
       {showQr && link && (
         <div className="share-dialog__qr" id={qrId}>
-          <div className="share-dialog__qr-tile">
+          <div
+            className="share-dialog__qr-tile hint hint--align-start"
+            data-hint={`Scan to open. ${label}.`}
+          >
             <canvas
               ref={canvasRef}
               role="img"
@@ -245,10 +253,6 @@ function ShareLinkRow({ kind, label, link }: ShareLinkRowProps) {
             >
               QR code for {link}
             </canvas>
-          </div>
-          <div>
-            <strong>Scan to open</strong>
-            <span>{label}</span>
           </div>
           {qrError && <p role="alert">{qrError}</p>}
         </div>
@@ -334,16 +338,17 @@ export function ShareDialog({
         role="dialog"
         aria-modal="true"
         aria-labelledby="share-dialog-title"
-        aria-describedby="share-dialog-description"
         tabIndex={-1}
       >
         <header className="share-dialog__header">
           <div>
-            <span className="share-dialog__eyebrow">INVITE THE ROOM</span>
-            <h2 id="share-dialog-title">Share this task</h2>
-            <p id="share-dialog-description">
-              Choose whether teammates can steer the agents or watch the work unfold.
-            </p>
+            <h2
+              className="hint hint--below hint--align-start"
+              id="share-dialog-title"
+              data-hint="Choose whether teammates can steer the agents or watch the work unfold. Anyone with a link can enter with that level of access."
+            >
+              Share this task
+            </h2>
           </div>
           <button
             className="share-dialog__close"
@@ -360,10 +365,6 @@ export function ShareDialog({
           <ShareLinkRow kind="steer" label="Can steer" link={steerLink} />
           <ShareLinkRow kind="view" label="Can view" link={viewLink} />
         </div>
-
-        <footer className="share-dialog__footer">
-          Anyone with a link can enter with that level of access.
-        </footer>
       </section>
     </div>,
     document.body,

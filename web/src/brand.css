@@ -102,6 +102,101 @@ a {
   color: #ffffff;
 }
 
+/* Delayed context for pointer users. Explanatory copy stays out of the
+   layout until someone deliberately lingers on its related control. */
+@media (hover: hover) and (pointer: fine) {
+  .hint[data-hint]:not([data-hint=""]) {
+    position: relative;
+  }
+
+  .hint[data-hint]:not([data-hint=""])::after {
+    content: attr(data-hint);
+    position: absolute;
+    z-index: 90;
+    left: 50%;
+    bottom: calc(100% + 10px);
+    box-sizing: border-box;
+    width: max-content;
+    max-width: min(280px, calc(100vw - 32px));
+    padding: 7px 9px;
+    border: 1px solid var(--ink-line);
+    border-radius: 4px;
+    background: rgba(11, 11, 12, 0.98);
+    color: var(--ink-dim);
+    box-shadow: 0 14px 38px rgba(0, 0, 0, 0.38);
+    font-family: var(--font-sans);
+    font-size: 11px;
+    font-style: normal;
+    font-weight: 400;
+    line-height: 1.4;
+    letter-spacing: 0;
+    text-align: left;
+    text-transform: none;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    opacity: 0;
+    visibility: hidden;
+    transform: translate(-50%, 4px);
+    transition:
+      opacity 280ms var(--ease-ensemble) 0ms,
+      transform 280ms var(--ease-ensemble) 0ms,
+      visibility 0s linear 280ms;
+    pointer-events: none;
+    user-select: none;
+  }
+
+  .hint--below[data-hint]:not([data-hint=""])::after {
+    top: calc(100% + 10px);
+    bottom: auto;
+  }
+
+  .hint--align-start[data-hint]:not([data-hint=""])::after {
+    right: auto;
+    left: 0;
+    transform: translateY(4px);
+  }
+
+  .hint--align-end[data-hint]:not([data-hint=""])::after {
+    right: 0;
+    left: auto;
+    transform: translateY(4px);
+  }
+
+  .hint[data-hint]:not([data-hint=""]):hover::after {
+    opacity: 1;
+    visibility: visible;
+    transform: translate(-50%, 0);
+    transition-delay: 1.5s, 1.5s, 1.5s;
+  }
+
+  .hint[data-hint]:not([data-hint=""]):hover {
+    z-index: 91;
+  }
+
+  .hint--align-start[data-hint]:not([data-hint=""]):hover::after,
+  .hint--align-end[data-hint]:not([data-hint=""]):hover::after {
+    transform: translateY(0);
+  }
+
+  .hint--ledger-empty[data-hint]:not([data-hint=""])::after {
+    top: calc(50% + 7px);
+    right: auto;
+    bottom: auto;
+    left: 48px;
+    transform: translateY(4px);
+  }
+
+  .hint--ledger-empty[data-hint]:not([data-hint=""]):hover::after {
+    transform: translateY(0);
+  }
+
+  .stream-pane.is-collapsed {
+    position: relative;
+    z-index: 3;
+    overflow: visible;
+  }
+}
+
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
