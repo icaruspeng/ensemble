@@ -24,6 +24,8 @@ interface FormErrors {
   name?: string;
   goal?: string;
   agents?: string;
+  repoUrl?: string;
+  importThreadId?: string;
 }
 
 const AGENT_CHOICES: AgentChoice[] = [
@@ -214,6 +216,29 @@ function responseError(payload: unknown, fallback: string) {
   return fallback;
 }
 
+function repositoryUrlIsValid(value: string) {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" || url.protocol === "http:";
+  } catch {
+    return false;
+  }
+}
+
+function FieldError({ id, message }: { id: string; message?: string }) {
+  return (
+    <p
+      className="home-field-error-slot"
+      id={id}
+      role="alert"
+      aria-atomic="true"
+      data-visible={message ? "true" : "false"}
+    >
+      {message ?? ""}
+    </p>
+  );
+}
+
 function roomSourceCandidates(payload: unknown) {
   const root = asRecord(payload);
   if (!root) return [];
@@ -363,6 +388,8 @@ export function HomePage({ onNavigate }: { onNavigate: (href: string) => void })
 
   const [name, setName] = useState("");
   const [goal, setGoal] = useState("");
+  const [repoUrl, setRepoUrl] = useState("");
+  const [importThreadId, setImportThreadId] = useState("");
   const [selectedAgents, setSelectedAgents] = useState<AgentId[]>(["turbo"]);
   const [formErrors, setFormErrors] = useState<FormErrors>({});
   const [createError, setCreateError] = useState("");
@@ -431,10 +458,22 @@ export function HomePage({ onNavigate }: { onNavigate: (href: string) => void })
 
     const cleanName = name.trim().replace(/\s+/g, " ");
     const cleanGoal = goal.trim();
+    const cleanRepoUrl = repoUrl.trim();
+    const cleanImportThreadId = importThreadId.trim();
     const nextErrors: FormErrors = {};
     if (!cleanName) nextErrors.name = "Name this task so the room can identify it.";
     if (!cleanGoal) nextErrors.goal = "Describe what the agents should accomplish.";
     if (!selectedAgents.length) nextErrors.agents = "Select at least one agent.";
+    if (cleanName.length > 120) nextErrors.name = "Keep the task name under 120 characters.";
+    if (cleanGoal.length > 10_000) nextErrors.goal = "Keep the goal under 10,000 characters.";
+    if (cleanRepoUrl && !repositoryUrlIsValid(cleanRepoUrl)) {
+      nextErrors.repoUrl = "Enter a valid http or https repository URL.";
+    } else if (cleanRepoUrl.length > 2_000) {
+      nextErrors.repoUrl = "Keep the repository URL under 2,000 characters.";
+    }
+    if (cleanImportThreadId.length > 500) {
+      nextErrors.importThreadId = "Keep the Codex session ID under 500 characters.";
+    }
 
     if (Object.keys(nextErrors).length) {
       setFormErrors(nextErrors);
@@ -446,6 +485,8 @@ export function HomePage({ onNavigate }: { onNavigate: (href: string) => void })
       .filter((agent) => selectedAgents.includes(agent.agentId))
       .map((agent) => agent.agentId);
     const body: Record<string, unknown> = { name: cleanName, goal: cleanGoal, agents };
+    if (cleanRepoUrl) body.repoUrl = cleanRepoUrl;
+    if (cleanImportThreadId) body.importThreadId = cleanImportThreadId;
 
     setCreating(true);
     setCreateError("");
@@ -524,7 +565,18 @@ export function HomePage({ onNavigate }: { onNavigate: (href: string) => void })
   return (
     <main className="home-page" ref={pageRef}>
       <HomeFloatingScrollbar scrollContainerRef={pageRef} />
+      <header className="home-topbar">
+        <a className="brand-word brand-home-link home-brand" href="/" aria-label="Ensemble home">
+          ensemble
+        </a>
+      </header>
       <div className="home-layout">
+        <section className="home-hero" aria-labelledby="home-title">
+          <span className="home-hero__orb" aria-hidden="true" />
+          <h1 id="home-title">ensemble</h1>
+          <p>the multiplayer moment for ai</p>
+        </section>
+
         <div className="home-command-stack">
           <section className="home-panel home-task-panel" data-load-state={loadState} aria-labelledby="room-list-title" aria-busy={loadState === "loading"}>
             <h2 className="home-visually-hidden" id="room-list-title">Tasks</h2>
@@ -615,7 +667,7 @@ export function HomePage({ onNavigate }: { onNavigate: (href: string) => void })
           </section>
 
           <section className="home-panel home-create-panel" aria-labelledby="create-task-title">
-            <h1 className="home-visually-hidden" id="create-task-title">Create a task</h1>
+            <h2 className="home-visually-hidden" id="create-task-title">Create a task</h2>
 
             <form className="home-create-form" onSubmit={submit} noValidate aria-busy={creating}>
               <div className="home-field">
@@ -631,9 +683,9 @@ export function HomePage({ onNavigate }: { onNavigate: (href: string) => void })
                   placeholder="Launch room"
                   autoComplete="off"
                   aria-invalid={!!formErrors.name}
-                  aria-describedby={formErrors.name ? "room-name-error" : undefined}
+                  aria-describedby="room-name-error"
                 />
-                {formErrors.name && <p className="home-field-error" id="room-name-error" role="alert">{formErrors.name}</p>}
+                <FieldError id="room-name-error" message={formErrors.name} />
               </div>
 
               <div
@@ -651,12 +703,12 @@ export function HomePage({ onNavigate }: { onNavigate: (href: string) => void })
                     setCreateError("");
                   }}
                   aria-invalid={!!formErrors.goal}
-                  aria-describedby={formErrors.goal ? "room-goal-error" : undefined}
+                  aria-describedby="room-goal-error"
                 />
-                {formErrors.goal && <p className="home-field-error" id="room-goal-error" role="alert">{formErrors.goal}</p>}
+                <FieldError id="room-goal-error" message={formErrors.goal} />
               </div>
 
-              <fieldset className="home-agent-fieldset" aria-describedby={formErrors.agents ? "room-agents-error" : undefined}>
+              <fieldset className="home-agent-fieldset" aria-describedby="room-agents-error">
                 <legend>Agents</legend>
                 <div className="home-agent-grid">
                   {offeredAgents.map((agent) => {
@@ -686,10 +738,60 @@ export function HomePage({ onNavigate }: { onNavigate: (href: string) => void })
                     );
                   })}
                 </div>
-                {formErrors.agents && <p className="home-field-error" id="room-agents-error" role="alert">{formErrors.agents}</p>}
+                <FieldError id="room-agents-error" message={formErrors.agents} />
               </fieldset>
 
-              {createError && <div className="home-create-error" role="alert"><strong>Creation failed</strong><span>{createError}</span></div>}
+              <details className="home-import">
+                <summary>Import existing project</summary>
+                <div className="home-import__fields">
+                  <div className="home-field">
+                    <label htmlFor="room-repo-url">Repository URL</label>
+                    <input
+                      id="room-repo-url"
+                      type="url"
+                      inputMode="url"
+                      value={repoUrl}
+                      onChange={(changeEvent) => {
+                        setRepoUrl(changeEvent.target.value);
+                        setFormErrors((current) => ({ ...current, repoUrl: undefined }));
+                        setCreateError("");
+                      }}
+                      placeholder="https://github.com/team/project"
+                      autoComplete="url"
+                      aria-invalid={!!formErrors.repoUrl}
+                      aria-describedby="room-repo-url-error"
+                    />
+                    <FieldError id="room-repo-url-error" message={formErrors.repoUrl} />
+                  </div>
+
+                  <div className="home-field">
+                    <label htmlFor="room-thread-id">Codex session ID</label>
+                    <input
+                      id="room-thread-id"
+                      value={importThreadId}
+                      onChange={(changeEvent) => {
+                        setImportThreadId(changeEvent.target.value);
+                        setFormErrors((current) => ({ ...current, importThreadId: undefined }));
+                        setCreateError("");
+                      }}
+                      placeholder="Optional"
+                      autoComplete="off"
+                      aria-invalid={!!formErrors.importThreadId}
+                      aria-describedby="room-thread-id-error"
+                    />
+                    <FieldError id="room-thread-id-error" message={formErrors.importThreadId} />
+                  </div>
+                </div>
+              </details>
+
+              <FieldError
+                id="room-create-error"
+                message={createError
+                  ? `Creation failed: ${createError}`
+                  : formErrors.repoUrl || formErrors.importThreadId
+                    ? "Check the import fields."
+                    : undefined}
+              />
 
               <button className="home-create-button btn-jelly" type="submit" disabled={creating} data-loading={creating ? "true" : "false"}>
                 <JellyButtonContent>{creating ? "Creating room..." : "Create task"}</JellyButtonContent>
