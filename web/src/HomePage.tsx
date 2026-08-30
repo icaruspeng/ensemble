@@ -283,8 +283,6 @@ export function HomePage({ onNavigate }: { onNavigate: (href: string) => void })
   const [name, setName] = useState("");
   const [goal, setGoal] = useState("");
   const [selectedAgents, setSelectedAgents] = useState<AgentId[]>(["turbo"]);
-  const [repoUrl, setRepoUrl] = useState("");
-  const [importThreadId, setImportThreadId] = useState("");
   const [formErrors, setFormErrors] = useState<FormErrors>({});
   const [createError, setCreateError] = useState("");
   const [creating, setCreating] = useState(false);
@@ -352,8 +350,6 @@ export function HomePage({ onNavigate }: { onNavigate: (href: string) => void })
 
     const cleanName = name.trim().replace(/\s+/g, " ");
     const cleanGoal = goal.trim();
-    const cleanRepoUrl = repoUrl.trim();
-    const cleanImportThreadId = importThreadId.trim();
     const nextErrors: FormErrors = {};
     if (!cleanName) nextErrors.name = "Name this task so the room can identify it.";
     if (!cleanGoal) nextErrors.goal = "Describe what the agents should accomplish.";
@@ -369,8 +365,6 @@ export function HomePage({ onNavigate }: { onNavigate: (href: string) => void })
       .filter((agent) => selectedAgents.includes(agent.agentId))
       .map((agent) => agent.agentId);
     const body: Record<string, unknown> = { name: cleanName, goal: cleanGoal, agents };
-    if (cleanRepoUrl) body.repoUrl = cleanRepoUrl;
-    if (cleanImportThreadId) body.importThreadId = cleanImportThreadId;
 
     setCreating(true);
     setCreateError("");
@@ -448,47 +442,10 @@ export function HomePage({ onNavigate }: { onNavigate: (href: string) => void })
 
   return (
     <main className="home-page">
-      <header className="home-topbar">
-        <a
-          className="home-brand hint hint--below hint--align-start"
-          href="/"
-          aria-label="Ensemble home"
-          data-hint="Multi-agent task hub"
-          onClick={(event) => {
-            event.preventDefault();
-            onNavigate("/");
-          }}
-        >
-          ENSEMBLE
-        </a>
-      </header>
-
       <div className="home-layout">
-        <section className="home-hero" aria-labelledby="home-title">
-          <span className="home-hero__orb" aria-hidden="true" />
-          <h1
-            className="hint hint--below"
-            id="home-title"
-            data-hint="Open a task, choose the agents, and watch every steer and outcome land in one shared room. Live collaborative agents. One living timeline. Every outcome attributed. Preview while agents work."
-          >
-            The multiplayer moment for AI
-          </h1>
-        </section>
-
         <div className="home-command-stack">
           <section className="home-panel home-task-panel" data-load-state={loadState} aria-labelledby="room-list-title" aria-busy={loadState === "loading"}>
-            <header className="home-panel__heading">
-              <div>
-                <h2
-                  className="hint hint--below hint--align-start"
-                  id="room-list-title"
-                  data-hint="Rooms active in this hub"
-                >
-                  Tasks
-                </h2>
-              </div>
-              {loadState === "ready" && <strong>{rooms.length}</strong>}
-            </header>
+            <h2 className="home-visually-hidden" id="room-list-title">Tasks</h2>
 
             <div className="home-task-panel__body">
               {loadState === "loading" && (
@@ -509,15 +466,7 @@ export function HomePage({ onNavigate }: { onNavigate: (href: string) => void })
               )}
 
               {loadState === "ready" && !rooms.length && (
-                <div className="home-state home-state--empty">
-                  <span aria-hidden="true">+</span>
-                  <strong
-                    className="hint hint--below hint--align-start"
-                    data-hint="Create the first room and invite your collaborators."
-                  >
-                    No tasks yet
-                  </strong>
-                </div>
+                <span className="home-visually-hidden" role="status">No tasks yet</span>
               )}
 
               {loadState === "ready" && !!rooms.length && (
@@ -584,18 +533,7 @@ export function HomePage({ onNavigate }: { onNavigate: (href: string) => void })
           </section>
 
           <section className="home-panel home-create-panel" aria-labelledby="create-task-title">
-            <header className="home-panel__heading">
-              <div>
-                <h2
-                  className="hint hint--below hint--align-start"
-                  id="create-task-title"
-                  data-hint="Provision a room and invite your team"
-                >
-                  Create a task
-                </h2>
-              </div>
-              <span className="home-create-panel__ready">READY</span>
-            </header>
+            <h1 className="home-visually-hidden" id="create-task-title">Create a task</h1>
 
             <form className="home-create-form" onSubmit={submit} noValidate aria-busy={creating}>
               <div className="home-field">
@@ -645,6 +583,7 @@ export function HomePage({ onNavigate }: { onNavigate: (href: string) => void })
                       <label
                         className={`home-agent-choice hint hint--below${selected ? " home-agent-choice--selected" : ""}`}
                         data-hint={`${agent.engine} / ${agent.model}`}
+                        data-agent-id={agent.agentId}
                         key={agent.agentId}
                       >
                         <input
@@ -667,40 +606,6 @@ export function HomePage({ onNavigate }: { onNavigate: (href: string) => void })
                 </div>
                 {formErrors.agents && <p className="home-field-error" id="room-agents-error" role="alert">{formErrors.agents}</p>}
               </fieldset>
-
-              <details className="home-import">
-                <summary>Import existing project</summary>
-                <div className="home-import__fields">
-                  <div className="home-field">
-                    <label htmlFor="repo-url">Repo URL</label>
-                    <input
-                      id="repo-url"
-                      type="url"
-                      inputMode="url"
-                      value={repoUrl}
-                      onChange={(changeEvent) => {
-                        setRepoUrl(changeEvent.target.value);
-                        setCreateError("");
-                      }}
-                      placeholder="https://github.com/team/project"
-                      autoComplete="url"
-                    />
-                  </div>
-                  <div className="home-field">
-                    <label htmlFor="codex-session-id">Codex session ID (optional)</label>
-                    <input
-                      id="codex-session-id"
-                      value={importThreadId}
-                      onChange={(changeEvent) => {
-                        setImportThreadId(changeEvent.target.value);
-                        setCreateError("");
-                      }}
-                      placeholder="0191c9d2..."
-                      autoComplete="off"
-                    />
-                  </div>
-                </div>
-              </details>
 
               {createError && <div className="home-create-error" role="alert"><strong>Creation failed</strong><span>{createError}</span></div>}
 

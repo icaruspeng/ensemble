@@ -318,28 +318,6 @@ function Avatar({
   );
 }
 
-function ConnectionMark({ status }: { status: ConnectionStatus }) {
-  const label =
-    status === "live"
-      ? "Live"
-      : status === "reconnecting"
-        ? "Reconnecting"
-        : status === "offline"
-          ? "Offline"
-          : status === "connecting"
-            ? "Connecting"
-            : "Idle";
-  return (
-    <span
-      className={`connection-mark connection-mark--${status} hint hint--below`}
-      data-hint={`Connection: ${label}`}
-    >
-      <span className="connection-mark__signal" aria-hidden="true" />
-      {label}
-    </span>
-  );
-}
-
 interface HeaderProps {
   actors: Actor[];
   agents: AgentSpec[];
@@ -347,10 +325,7 @@ interface HeaderProps {
   driverActorId: string | null;
   isDriver: boolean;
   isViewer: boolean;
-  status: ConnectionStatus;
   roomName: string;
-  previewUrl: string;
-  mockMode: boolean;
   onHandoff: (actorId: string) => void;
   onInterrupt: () => void;
   onShare: () => void;
@@ -363,10 +338,7 @@ function Header({
   driverActorId,
   isDriver,
   isViewer,
-  status,
   roomName,
-  previewUrl,
-  mockMode,
   onHandoff,
   onInterrupt,
   onShare,
@@ -374,15 +346,11 @@ function Header({
   return (
     <header className="topbar">
       <div className="brand-lockup">
-        <a className="brand-word brand-home-link" href="/" aria-label="all tasks">ensemble</a>
+        <a className="brand-word brand-home-link" href="/" aria-label="Ensemble home">ensemble</a>
         <span className="session-title">{roomName}</span>
-        <a className="all-tasks-link" href="/">all tasks</a>
-        {mockMode && <span className="mode-label">Mock</span>}
-        {isViewer && <span className="viewer-badge">View only</span>}
       </div>
 
       <div className="presence" aria-label="People and agents in this session">
-        <ConnectionMark status={status} />
         <div className="presence__avatars">
           {agents.map((agent) => {
             const actor: Actor = { id: `agent:${agent.agentId}`, name: agent.label, kind: "agent" };
@@ -404,10 +372,7 @@ function Header({
             const canHandoff = !isViewer && isDriver && !self;
             const accessibleName = `${actor.name}${self ? ", you" : ""}${driver ? ", current driver" : ""}`;
             const content = (
-              <>
-                <Avatar actor={actor} size="medium" />
-                {driver && <span className="driver-badge">DRIVER</span>}
-              </>
+              <Avatar actor={actor} size="medium" />
             );
             return canHandoff ? (
               <button
@@ -436,18 +401,24 @@ function Header({
       </div>
 
       <div className="topbar__actions">
-        {previewUrl && (
-          <a className="mobile-preview-link" href={previewUrl} target="_blank" rel="noreferrer">
-            open preview ↗
-          </a>
-        )}
-        {isDriver && !isViewer && (
-          <button className="interrupt-button btn-jelly" type="button" onClick={onInterrupt}>
-            <JellyButtonContent>Interrupt</JellyButtonContent>
-          </button>
-        )}
-        <button className="share-button" type="button" onClick={onShare}>
-          Share
+        <button
+          className="interrupt-button header-icon-button hint hint--below"
+          type="button"
+          onClick={onInterrupt}
+          disabled={!isDriver || isViewer}
+          aria-label={isDriver && !isViewer ? "Interrupt active agent turn" : "Only the driver can interrupt"}
+          data-hint={isDriver && !isViewer ? "Interrupt active turn" : "Only the driver can interrupt"}
+        >
+          <span aria-hidden="true">■</span>
+        </button>
+        <button
+          className="share-button header-icon-button hint hint--below hint--align-end"
+          type="button"
+          onClick={onShare}
+          aria-label="Share session"
+          data-hint="Share session"
+        >
+          <span aria-hidden="true">↗</span>
         </button>
       </div>
     </header>
@@ -928,7 +899,7 @@ function TimelineEvent({
 type StreamPaneKind = "chat" | "work";
 
 function paneFoldKey(roomId: string, pane: StreamPaneKind) {
-  return `ensemble:pane-fold:${roomId}:${pane}`;
+  return `ensemble:pane-fold:v2:${roomId}:${pane}`;
 }
 
 function initialPaneFold(roomId: string, pane: StreamPaneKind) {
@@ -938,7 +909,7 @@ function initialPaneFold(roomId: string, pane: StreamPaneKind) {
   } catch {
     // Storage can be disabled without making the live room unusable.
   }
-  return pane === "work" && window.matchMedia("(max-width: 767px)").matches;
+  return pane === "work";
 }
 
 function usePaneFold(roomId: string, pane: StreamPaneKind) {
@@ -995,7 +966,7 @@ function StreamPaneHeader({
   return (
     <header className="stream-pane__heading">
       <button
-        className={`panel-heading stream-pane__header stream-pane__toggle hint hint--align-start${pane === "work" && folded ? "" : " hint--below"}`}
+        className="panel-heading stream-pane__header stream-pane__toggle hint hint--below hint--align-start"
         type="button"
         data-hint={subtitle}
         onClick={onToggle}
@@ -1188,7 +1159,7 @@ function Timeline({
       <section className={`stream-pane stream-pane--chat${chatFolded ? " is-collapsed" : ""}`} aria-label="Room chat">
         <StreamPaneHeader
           pane="chat"
-          title="💬 chat"
+          title="Chat"
           subtitle="Crew and agents, together. The room is listening. Start a chat or steer the crew. Agent replies will gather here."
           count={chatEvents.length}
           unread={chatUnread}
@@ -1234,7 +1205,7 @@ function Timeline({
       <section className={`stream-pane stream-pane--work work-log${workFolded ? " is-collapsed" : ""}`} aria-label="Agent work log">
         <StreamPaneHeader
           pane="work"
-          title="🛠 work log"
+          title="Work log"
           subtitle="commands, changes, and room state"
           count={workEvents.length}
           unread={workUnread}
@@ -1401,6 +1372,8 @@ function Composer({
     : isDriver
       ? "Dispatches directly. Describe the next visible change."
       : "Describe the next visible change.";
+  const nextMode: ComposerMode = mode === "steer" ? "chat" : "steer";
+  const canToggleMode = canSteer || nextMode === "chat";
 
   return (
     <form
@@ -1410,72 +1383,63 @@ function Composer({
         onSend();
       }}
     >
-      <div className="composer-mode-tabs" role="group" aria-label="Message mode">
-        <button
-          type="button"
-          className={mode === "steer" ? "is-selected" : ""}
-          aria-pressed={mode === "steer"}
-          disabled={!canSteer}
-          onClick={() => onModeChange("steer")}
-        >
-          steer
-        </button>
-        <button
-          type="button"
-          className={mode === "chat" ? "is-selected" : ""}
-          aria-pressed={mode === "chat"}
-          onClick={() => onModeChange("chat")}
-        >
-          chat
-        </button>
-      </div>
-      <div
-        className="composer-label hint hint--below hint--align-start"
-        data-hint={composerHint}
-      >
-        <label htmlFor={mobile ? "mobile-steer" : "desktop-steer"}>
-          {mode === "chat" ? "Chat with the room" : "Steer the room"}
-        </label>
-        {mode === "steer" && !isDriver && <span>Driver review required</span>}
-      </div>
-      {mode === "steer" && !!agents.length && (
-        <div className="composer-target" role="group" aria-label="Choose an agent for this steer">
-          <span>to:</span>
-          <div className="composer-target__chips">
-            {agents.map((agent) => (
-              <button
-                key={agent.agentId}
-                type="button"
-                className={agent.agentId === selectedAgentId ? "is-selected" : ""}
-                style={{ "--agent-color": agent.color || fallbackAgentColor(agent.agentId) } as CSSProperties}
-                aria-pressed={agent.agentId === selectedAgentId}
-                onClick={() => onSelectAgent(agent.agentId)}
-              >
-                {agentShortLabel(agent)}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
       <div className="composer-input-row">
-        <textarea
-          id={mobile ? "mobile-steer" : "desktop-steer"}
-          rows={mobile ? 1 : 2}
-          value={text}
-          onChange={(event) => setText(event.target.value)}
-          onKeyDown={handleKey}
-          disabled={status !== "live" || (mode === "steer" && !canSteer)}
-          aria-invalid={!!error}
-          aria-describedby={error ? `${mobile ? "mobile" : "desktop"}-steer-error` : undefined}
-        />
+        <div className="composer-field-shell">
+          <button
+            className="composer-mode-toggle hint hint--below hint--align-start"
+            type="button"
+            onClick={() => canToggleMode && onModeChange(nextMode)}
+            disabled={!canToggleMode}
+            aria-label={`Message mode: ${mode}. Switch to ${nextMode}.`}
+            data-hint={canToggleMode ? `Switch to ${nextMode}` : "View-only rooms use chat"}
+          >
+            {mode}
+          </button>
+          {mode === "steer" && agents.length >= 2 && (
+            <div className="composer-target" role="group" aria-label="Choose an agent for this steer">
+              <span aria-hidden="true">to:</span>
+              <div className="composer-target__chips">
+                {agents.map((agent) => (
+                  <button
+                    key={agent.agentId}
+                    type="button"
+                    className={`hint hint--below${agent.agentId === selectedAgentId ? " is-selected" : ""}`}
+                    style={{ "--agent-color": agent.color || fallbackAgentColor(agent.agentId) } as CSSProperties}
+                    aria-label={`Send steer to ${agent.label}`}
+                    aria-pressed={agent.agentId === selectedAgentId}
+                    data-hint={`${agent.label}, ${agent.model}`}
+                    onClick={() => onSelectAgent(agent.agentId)}
+                  >
+                    <span className="composer-target__orb" aria-hidden="true" />
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+          <label className="visually-hidden" htmlFor={mobile ? "mobile-steer" : "desktop-steer"}>
+            {mode === "chat" ? "Chat with the room" : "Steer the room"}
+          </label>
+          <textarea
+            id={mobile ? "mobile-steer" : "desktop-steer"}
+            rows={1}
+            value={text}
+            placeholder={mode === "chat" ? "Message the room" : "Steer the room"}
+            onChange={(event) => setText(event.target.value)}
+            onKeyDown={handleKey}
+            disabled={status !== "live" || (mode === "steer" && !canSteer)}
+            aria-invalid={!!error}
+            aria-describedby={error ? `${mobile ? "mobile" : "desktop"}-steer-error` : undefined}
+            data-hint={composerHint}
+          />
+        </div>
         <button className="send-button btn-jelly" type="submit" disabled={status !== "live" || (mode === "steer" && !canSteer) || !text.trim()}>
           <JellyButtonContent>Send</JellyButtonContent>
         </button>
       </div>
-      {mobile && (
+      {mobile && (taskCount > 0 || gateCount > 0) && (
         <div className="mobile-panel-actions">
-          <button type="button" onClick={() => onOpenSheet?.("queue")}>Queue <b>{taskCount}</b></button>
-          <button type="button" onClick={() => onOpenSheet?.("gates")}>Gates <b>{gateCount}</b></button>
+          {taskCount > 0 && <button type="button" onClick={() => onOpenSheet?.("queue")}>Queue <b>{taskCount}</b></button>}
+          {gateCount > 0 && <button type="button" onClick={() => onOpenSheet?.("gates")}>Gates <b>{gateCount}</b></button>}
         </div>
       )}
       {error && <p className="form-error" id={`${mobile ? "mobile" : "desktop"}-steer-error`} role="alert">{error}</p>}
@@ -1491,6 +1455,7 @@ function TaskQueue({
   isDriver,
   canManage,
   onDrop,
+  defaultExpanded = false,
 }: {
   tasks: TaskView[];
   actors: Map<string, Actor>;
@@ -1499,26 +1464,32 @@ function TaskQueue({
   isDriver: boolean;
   canManage: boolean;
   onDrop: (taskId: string) => void;
+  defaultExpanded?: boolean;
 }) {
+  const [expanded, setExpanded] = useState(defaultExpanded);
   const visibleTasks = tasks.filter((task) => task.status !== "completed");
+
+  useEffect(() => {
+    if (!visibleTasks.length) setExpanded(false);
+  }, [visibleTasks.length]);
+
+  if (!visibleTasks.length) return null;
+
   return (
-    <section className="control-section task-queue">
-      <header className="control-section__heading">
-        <h3>Task queue</h3>
-        <span>{visibleTasks.length}</span>
-      </header>
-      <div className="control-section__body">
-        {!visibleTasks.length ? (
-          <div className="control-empty">
-            <strong
-              className="hint hint--below hint--align-start"
-              data-hint="The next accepted steer lands here."
-            >
-              Queue clear
-            </strong>
-          </div>
-        ) : (
-          visibleTasks.map((task) => {
+    <section className={`control-section task-queue${expanded ? " is-expanded" : ""}`}>
+      <button
+        className="control-pill"
+        type="button"
+        aria-expanded={expanded}
+        onClick={() => setExpanded((current) => !current)}
+      >
+        <span>Queue</span>
+        <b>{visibleTasks.length}</b>
+        <i aria-hidden="true">⌄</i>
+      </button>
+      {expanded && (
+        <div className="control-section__body">
+          {visibleTasks.map((task) => {
             const canDrop = canManage && task.status === "queued" && (isDriver || task.byActorId === actorId);
             return (
             <article className={`task-item task-item--${task.status}`} key={task.taskId}>
@@ -1546,9 +1517,9 @@ function TaskQueue({
               <span className="task-author">Directed by {actorName(actors, task.byActorId)}</span>
             </article>
             );
-          })
-        )}
-      </div>
+          })}
+        </div>
+      )}
     </section>
   );
 }
@@ -1558,12 +1529,15 @@ function GatePanel({
   isDriver,
   driverName,
   onResolve,
+  defaultExpanded = false,
 }: {
   gates: GateView[];
   isDriver: boolean;
   driverName: string;
   onResolve: (gateId: string, approved: boolean) => boolean;
+  defaultExpanded?: boolean;
 }) {
+  const [expanded, setExpanded] = useState(defaultExpanded);
   const [pending, setPending] = useState<Set<string>>(new Set());
   const pendingTimers = useRef<Set<number>>(new Set<number>());
 
@@ -1576,6 +1550,10 @@ function GatePanel({
     const openIds = new Set(gates.map((gate) => gate.gateId));
     setPending((current) => new Set([...current].filter((id) => openIds.has(id))));
   }, [gates]);
+
+  useEffect(() => {
+    if (!gates.length) setExpanded(false);
+  }, [gates.length]);
 
   const resolve = (gateId: string, approved: boolean) => {
     if (pending.has(gateId)) return;
@@ -1593,24 +1571,23 @@ function GatePanel({
     }
   };
 
+  if (!gates.length) return null;
+
   return (
-    <section className="control-section gate-panel">
-      <header className="control-section__heading">
-        <h3>Gates</h3>
-        <span className={gates.length ? "count-alert" : ""}>{gates.length}</span>
-      </header>
-      <div className="control-section__body">
-        {!gates.length ? (
-          <div className="control-empty">
-            <strong
-              className="hint hint--below hint--align-start"
-              data-hint="Teammate steers will pause here for the driver."
-            >
-              No decisions waiting
-            </strong>
-          </div>
-        ) : (
-          gates.map((gate) => (
+    <section className={`control-section gate-panel${expanded ? " is-expanded" : ""}`}>
+      <button
+        className="control-pill"
+        type="button"
+        aria-expanded={expanded}
+        onClick={() => setExpanded((current) => !current)}
+      >
+        <span>Gates</span>
+        <b>{gates.length}</b>
+        <i aria-hidden="true">⌄</i>
+      </button>
+      {expanded && (
+        <div className="control-section__body">
+          {gates.map((gate) => (
             <article className="gate-card" key={gate.gateId}>
               <div className="gate-card__top"><span>Decision needed</span><code>{gate.taskId}</code></div>
               <p>{gate.question}</p>
@@ -1623,9 +1600,9 @@ function GatePanel({
                 <span className="gate-waiting">Waiting for {driverName}</span>
               )}
             </article>
-          ))
-        )}
-      </div>
+          ))}
+        </div>
+      )}
     </section>
   );
 }
@@ -1671,51 +1648,66 @@ function MobileSheet({ title, onClose, children }: { title: string; onClose: () 
 }
 
 function Ledger({ rows, presence }: { rows: LedgerRow[]; presence: Actor[] }) {
-  const displayRows = rows.length
-    ? rows
-    : presence.map((actor) => ({ actorId: actor.id, name: actor.name, steers: 0, tokens: 0, costUsd: 0, outcomes: [] }));
+  const [expanded, setExpanded] = useState(false);
+  const displayRows = [...rows];
+  const attributedActorIds = new Set(rows.map((row) => row.actorId));
+  for (const actor of presence) {
+    if (attributedActorIds.has(actor.id)) continue;
+    displayRows.push({ actorId: actor.id, name: actor.name, steers: 0, tokens: 0, costUsd: 0, outcomes: [] });
+  }
+  const totalCost = displayRows.reduce((sum, row) => sum + (Number.isFinite(row.costUsd) ? row.costUsd : 0), 0);
+  const participantLabel = `${displayRows.length} participant${displayRows.length === 1 ? "" : "s"}`;
 
   return (
-    <footer className="ledger" aria-label="Attribution ledger">
-      <div className="ledger__title">
-        <span>Attribution</span>
-        <strong
-          className={!displayRows.length ? "hint hint--align-start" : undefined}
-          data-hint={!displayRows.length ? "Contributions will be attributed as the room works." : undefined}
-        >
-          Ledger
-        </strong>
-      </div>
-      <div className="ledger__rows">
-        {displayRows.map((row) => {
-            const actor: Actor = { id: row.actorId, name: row.name, kind: "human" };
-            return (
-              <article
-                className={`ledger-person${!row.outcomes.length ? " hint hint--ledger-empty" : ""}`}
-                data-hint={!row.outcomes.length ? "No published outcome yet" : undefined}
-                key={row.actorId}
-              >
-                <Avatar actor={actor} size="small" />
-                <div className="ledger-person__identity">
-                  <strong>{row.name}</strong>
-                  <div
-                    className="ledger-person__outcomes"
-                    role={row.outcomes.length ? "region" : undefined}
-                    aria-label={row.outcomes.length ? `${row.name} outcomes` : undefined}
-                    tabIndex={row.outcomes.length ? 0 : undefined}
-                  >
-                    {row.outcomes.join(" | ")}
+    <footer className={`ledger${expanded ? " is-expanded" : ""}`} aria-label="Attribution ledger">
+      <button
+        className="ledger__chip"
+        type="button"
+        aria-expanded={expanded}
+        onClick={() => setExpanded((current) => !current)}
+      >
+        <span>{participantLabel}</span>
+        <strong>{formatCost(totalCost)}</strong>
+        <i aria-hidden="true">⌃</i>
+      </button>
+      {expanded && (
+        <div className="ledger__table">
+          <div className="ledger__title">
+            <span>Attribution</span>
+            <strong>Ledger</strong>
+          </div>
+          <div className="ledger__rows">
+            {displayRows.map((row) => {
+              const actor: Actor = { id: row.actorId, name: row.name, kind: "human" };
+              return (
+                <article
+                  className={`ledger-person${!row.outcomes.length ? " hint hint--ledger-empty" : ""}`}
+                  data-hint={!row.outcomes.length ? "No published outcome yet" : undefined}
+                  key={row.actorId}
+                >
+                  <Avatar actor={actor} size="small" />
+                  <div className="ledger-person__identity">
+                    <strong>{row.name}</strong>
+                    <div
+                      className="ledger-person__outcomes"
+                      role={row.outcomes.length ? "region" : undefined}
+                      aria-label={row.outcomes.length ? `${row.name} outcomes` : undefined}
+                      tabIndex={row.outcomes.length ? 0 : undefined}
+                    >
+                      {row.outcomes.join(" | ")}
+                    </div>
                   </div>
-                </div>
-                <dl>
-                  <div><dt>steers</dt><dd>{row.steers}</dd></div>
-                  <div><dt>tokens</dt><dd>{formatTokens(row.tokens)}</dd></div>
-                  <div><dt>cost</dt><dd>{formatCost(row.costUsd)}</dd></div>
-                </dl>
-              </article>
-            );
-          })}
-      </div>
+                  <dl>
+                    <div><dt>steers</dt><dd>{row.steers}</dd></div>
+                    <div><dt>tokens</dt><dd>{formatTokens(row.tokens)}</dd></div>
+                    <div><dt>cost</dt><dd>{formatCost(row.costUsd)}</dd></div>
+                  </dl>
+                </article>
+              );
+            })}
+          </div>
+        </div>
+      )}
     </footer>
   );
 }
@@ -1921,6 +1913,11 @@ function SessionPage({
     return () => desktop.removeEventListener("change", closeMobileSheetAtDesktop);
   }, []);
 
+  useEffect(() => {
+    if (mobileSheet === "queue" && visibleTaskCount === 0) setMobileSheet(null);
+    if (mobileSheet === "gates" && derived.gates.length === 0) setMobileSheet(null);
+  }, [derived.gates.length, mobileSheet, visibleTaskCount]);
+
   const sendComposer = () => {
     const text = steerText.trim();
     if (!text) {
@@ -1984,10 +1981,7 @@ function SessionPage({
           driverActorId={session.driverActorId}
           isDriver={isDriver}
           isViewer={isViewer}
-          status={session.status}
           roomName={roomName}
-          previewUrl={derived.previewUrl}
-          mockMode={mockMode}
           onHandoff={handoff}
           onInterrupt={interrupt}
           onShare={() => setShareOpen(true)}
@@ -2083,7 +2077,7 @@ function SessionPage({
 
       {transportNotice && <div className="status-toast" role="status">{transportNotice}</div>}
 
-      {mobileSheet === "queue" && (
+      {mobileSheet === "queue" && visibleTaskCount > 0 && (
         <MobileSheet title="Task queue" onClose={() => setMobileSheet(null)}>
           <TaskQueue
             tasks={derived.tasks}
@@ -2093,12 +2087,13 @@ function SessionPage({
             isDriver={isDriver && !isViewer}
             canManage={!isViewer}
             onDrop={dropTask}
+            defaultExpanded
           />
         </MobileSheet>
       )}
-      {mobileSheet === "gates" && (
+      {mobileSheet === "gates" && derived.gates.length > 0 && (
         <MobileSheet title="Driver gates" onClose={() => setMobileSheet(null)}>
-          <GatePanel gates={derived.gates} isDriver={isDriver && !isViewer} driverName={driverName} onResolve={resolveGate} />
+          <GatePanel gates={derived.gates} isDriver={isDriver && !isViewer} driverName={driverName} onResolve={resolveGate} defaultExpanded />
         </MobileSheet>
       )}
 
