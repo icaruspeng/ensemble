@@ -18,7 +18,7 @@ from runloop_api_client import RunloopSDK
 
 ROOT = Path(__file__).resolve().parent.parent
 STATE = ROOT / "deploy" / "state_v2.json"
-KEEP_ALIVE = 24 * 3600
+KEEP_ALIVE = int(os.environ.get("ENSEMBLE_KEEP_ALIVE_S", 24 * 3600))
 
 
 def read_state():
