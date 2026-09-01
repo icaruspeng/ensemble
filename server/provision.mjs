@@ -242,6 +242,11 @@ export function createProvisioner(options = {}) {
   const encodedCodexAuth =
     nonemptyString(options.codexAuthJsonBase64) ??
     nonemptyString(env.CODEX_AUTH_JSON);
+  const envWorkspaceTtl = Number.parseInt(env.WORKSPACE_KEEP_ALIVE_S ?? "", 10);
+  const workspaceKeepAliveSeconds =
+    Number.isInteger(envWorkspaceTtl) && envWorkspaceTtl >= 60
+      ? envWorkspaceTtl
+      : 14400;
   const envMaxLive = Number.parseInt(env.MAX_LIVE_WORKSPACES ?? "", 10);
   const maxLive =
     options.maxLiveWorkspaces ??
@@ -877,7 +882,7 @@ export function createProvisioner(options = {}) {
       const created = await post("devboxes", {
         name: `ens-${room.roomId}`,
         mounts: [{ type: "agent_mount", agent_name: "codex" }],
-        launch_parameters: { keep_alive_time_seconds: 14400 },
+        launch_parameters: { keep_alive_time_seconds: workspaceKeepAliveSeconds },
       });
       const devboxId = nonemptyString(created?.id);
       if (!devboxId) throw new Error("Runloop create response did not include id");

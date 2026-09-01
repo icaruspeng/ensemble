@@ -171,6 +171,7 @@ def main():
         f"DEMO_ROOM=1 DEMO_WORKSPACE_JSON=\"{demo_ws_json}\" "
         f"DEMO_STEER_TOKEN=crew DEMO_VIEW_TOKEN=watch "
         f"OPEN_STEERING=1 MAX_LIVE_WORKSPACES=10 "
+        f"WORKSPACE_KEEP_ALIVE_S={KEEP_ALIVE} "
     )
     if reflex_cfg.get("apiKey"):
         env += f"REFLEX_API_KEY={reflex_cfg['apiKey']} REFLEX_ORG={reflex_cfg.get('organizationId','')} "
